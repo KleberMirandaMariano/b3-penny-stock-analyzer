@@ -1,0 +1,13 @@
+{
+  "descricao": "Lista base de tickers B3 monitorados pelo sistema. Expandida automaticamente pelo rb3/COTAHIST quando disponível.",
+  "tickers": [
+    "AZUL4", "RAIZ4", "QUAL3", "CVCB3", "LJQQ3", "HBOR3", "COGN3", "BHIA3",
+    "CBAV3", "PGMN3", "PCAR3", "MELK3", "MTRE3", "MNPR3", "LIGT3", "CAML3",
+    "CASH3", "CMIN3", "CSAN3", "JHSF3", "TASA3", "BEEF3", "BSLI3", "RAPT4",
+    "GMAT3", "BIOM3", "MRVE3", "DEXP3", "ROMI3", "ALLD3", "GOAU4", "ASAI3",
+    "CBEE3", "RECV3", "KLBN4", "PETZ3", "OIBR3", "VVEO3", "FESA4", "LAVV3",
+    "BMOB3", "GFSA3", "LREN3", "CYRE3", "EVEN3", "TRIS3", "TEND3", "PLPL3",
+    "AMAR3", "PTBL3", "MOVI3", "IFCM3", "DOTZ3", "YDUQ3", "SEER3", "AERI3",
+    "VSTA3", "BRIT3", "ESPA3", "PNVL3", "AGXY3", "MBLY3", "SMTO3", "CALI3"
+  ]
+}
