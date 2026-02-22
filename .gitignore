@@ -6,3 +6,11 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Dados gerados automaticamente (rb3 + yfinance)
+data/
+public/stocks.json
+
+# Cache Python
+__pycache__/
+*.pyc
