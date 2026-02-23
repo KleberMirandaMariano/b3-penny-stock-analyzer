@@ -5,6 +5,14 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+export interface OptionData {
+  ticker: string;
+  tipo: 'CALL' | 'PUT';
+  strike: number | null;
+  preco: number | null;
+  vencimento: string;
+}
+
 export interface StockData {
   ticker: string;
   empresa: string;
@@ -19,6 +27,7 @@ export interface StockData {
   varSemana: number | null;
   volume: number | null;
   ultimaAtualizacao: string;
+  opcoes?: OptionData[];
 }
 
 export function parseCurrency(val: string): number {

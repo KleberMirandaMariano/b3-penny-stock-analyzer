@@ -19,12 +19,12 @@ import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT_DIR   = path.join(__dirname, '..');
+const ROOT_DIR = path.join(__dirname, '..');
 const PUBLIC_DIR = path.join(ROOT_DIR, 'public');
-const DIST_DIR   = path.join(ROOT_DIR, 'dist');
+const DIST_DIR = path.join(ROOT_DIR, 'dist');
 const STOCKS_FILE = path.join(PUBLIC_DIR, 'stocks.json');
 
-const app  = express();
+const app = express();
 const PORT = Number(process.env.PORT ?? 3001);
 
 // ---------------------------------------------------------------------------
@@ -62,7 +62,7 @@ function runUpdateScript(
   const scriptPath = path.join(ROOT_DIR, 'scripts', 'update_stocks.py');
   const args = extraArgs.join(' ');
   exec(
-    `python3 "${scriptPath}" ${args}`.trim(),
+    `python "${scriptPath}" ${args}`.trim(),
     { cwd: ROOT_DIR, timeout: 10 * 60 * 1000 }, // 10 min máx
     callback
   );
@@ -92,11 +92,11 @@ app.get('/api/status', (req: Request, res: Response) => {
     return;
   }
   res.json({
-    disponivel:      true,
-    atualizadoEm:    data.atualizadoEm   ?? null,
-    dataReferencia:  data.dataReferencia ?? null,
-    fonte:           data.fonte          ?? null,
-    totalAcoes:      data.totalAcoes     ?? 0,
+    disponivel: true,
+    atualizadoEm: data.atualizadoEm ?? null,
+    dataReferencia: data.dataReferencia ?? null,
+    fonte: data.fonte ?? null,
+    totalAcoes: data.totalAcoes ?? 0,
     updateInProgress,
   });
 });
@@ -141,10 +141,10 @@ if (existsSync(DIST_DIR)) {
 const UPDATE_INTERVAL_MS = 30 * 60 * 1000; // 30 minutos
 
 function isTradinghours(): boolean {
-  const now   = new Date();
+  const now = new Date();
   // Pregão B3: 10:00–18:20 BRT (UTC-3) → 13:00–21:20 UTC
-  const utcH  = now.getUTCHours();
-  const utcM  = now.getUTCMinutes();
+  const utcH = now.getUTCHours();
+  const utcM = now.getUTCMinutes();
   const total = utcH * 60 + utcM;
   return total >= 13 * 60 && total <= 21 * 60 + 20;
 }
@@ -156,7 +156,7 @@ setInterval(() => {
   runUpdateScript([], (err, _stdout, stderr) => {
     updateInProgress = false;
     if (err) console.error('[auto-update] Falha:', stderr || err.message);
-    else     console.log('[auto-update] Concluído.');
+    else console.log('[auto-update] Concluído.');
   });
 }, UPDATE_INTERVAL_MS);
 

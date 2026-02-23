@@ -1,5 +1,5 @@
 import Papa from 'papaparse';
-import { RAW_STOCK_DATA } from '../data';
+import { RAW_STOCK_DATA, MOCK_OPTIONS_DATA } from '../data';
 import { StockData, parseCurrency, parsePercentage, parseNumber } from '../utils';
 
 export interface StocksResponse {
@@ -22,19 +22,20 @@ function parseStaticCsv(): StockData[] {
   return (results.data as any[])
     .filter((row) => row.Ticker && row.Empresa)
     .map((row) => ({
-      ticker:           row.Ticker,
-      empresa:          row.Empresa,
-      preco:            parseCurrency(row['Preço Atual (R$)']),
-      setor:            row.Setor || 'N/A',
-      dy:               parsePercentage(row['Dividend Yield (%)']),
-      pl:               parseNumber(row['P/L']),
-      pvp:              parseNumber(row['P/VP']),
-      var5a:            parsePercentage(row['Variação 5 Anos (%)']),
-      upsideGraham:     parsePercentage(row['Upside Graham (%)']),
-      varDia:           parsePercentage(row['Var. Dia (%)']),
-      varSemana:        parsePercentage(row['Var. Semana (%)']),
-      volume:           parseNumber(row.Volume),
+      ticker: row.Ticker,
+      empresa: row.Empresa,
+      preco: parseCurrency(row['Preço Atual (R$)']),
+      setor: row.Setor || 'N/A',
+      dy: parsePercentage(row['Dividend Yield (%)']),
+      pl: parseNumber(row['P/L']),
+      pvp: parseNumber(row['P/VP']),
+      var5a: parsePercentage(row['Variação 5 Anos (%)']),
+      upsideGraham: parsePercentage(row['Upside Graham (%)']),
+      varDia: parsePercentage(row['Var. Dia (%)']),
+      varSemana: parsePercentage(row['Var. Semana (%)']),
+      volume: parseNumber(row.Volume),
       ultimaAtualizacao: row['Última Atualização'],
+      opcoes: MOCK_OPTIONS_DATA[row.Ticker] || [],
     }));
 }
 
@@ -43,27 +44,28 @@ function parseStaticCsv(): StockData[] {
 // ---------------------------------------------------------------------------
 function parseApiResponse(data: any): StocksResponse {
   const acoes: StockData[] = (data.acoes ?? []).map((row: any) => ({
-    ticker:            row.ticker ?? '',
-    empresa:           row.empresa ?? row.ticker ?? '',
-    preco:             typeof row.preco === 'number' ? row.preco : 0,
-    setor:             row.setor ?? 'N/A',
-    dy:                row.dy   ?? null,
-    pl:                row.pl   ?? null,
-    pvp:               row.pvp  ?? null,
-    var5a:             row.var5a ?? null,
-    upsideGraham:      row.upsideGraham ?? null,
-    varDia:            row.varDia    ?? null,
-    varSemana:         row.varSemana ?? null,
-    volume:            row.volume    ?? null,
+    ticker: row.ticker ?? '',
+    empresa: row.empresa ?? row.ticker ?? '',
+    preco: typeof row.preco === 'number' ? row.preco : 0,
+    setor: row.setor ?? 'N/A',
+    dy: row.dy ?? null,
+    pl: row.pl ?? null,
+    pvp: row.pvp ?? null,
+    var5a: row.var5a ?? null,
+    upsideGraham: row.upsideGraham ?? null,
+    varDia: row.varDia ?? null,
+    varSemana: row.varSemana ?? null,
+    volume: row.volume ?? null,
     ultimaAtualizacao: row.ultimaAtualizacao ?? data.atualizadoEm ?? '',
+    opcoes: row.opcoes ?? [],
   }));
 
   return {
-    stocks:         acoes,
-    lastUpdate:     data.atualizadoEm   ?? '',
+    stocks: acoes,
+    lastUpdate: data.atualizadoEm ?? '',
     dataReferencia: data.dataReferencia ?? '',
-    fonte:          data.fonte          ?? 'yfinance',
-    isLive:         true,
+    fonte: data.fonte ?? 'yfinance',
+    isLive: true,
   };
 }
 
@@ -84,10 +86,10 @@ export async function getStocks(): Promise<StocksResponse> {
     const firstDate = stocks[0]?.ultimaAtualizacao ?? '';
     return {
       stocks,
-      lastUpdate:     firstDate,
+      lastUpdate: firstDate,
       dataReferencia: '',
-      fonte:          'CSV estático (API indisponível)',
-      isLive:         false,
+      fonte: 'CSV estático (API indisponível)',
+      isLive: false,
     };
   }
 }

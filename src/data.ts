@@ -35,3 +35,19 @@ ASAI3,Sendas Distribuidora SA,"R$ 9,50",Consumo Não Cíclico,,"25,88","5,35","-
 CBEE3,Ampla Energia e Servicos SA,"R$ 10,00",Energia,,"6,56","0,46","-83,70%","+173,82%","-6,45%","0,00%",700,21/02/2026 21:06
 RECV3,Petroreconcavo SA,"R$ 11,69",Energia,,"5,52","0,75","-29,92%","+132,81%","+2,81%","+4,00%",5.439.000,21/02/2026 21:06
 KLBN4,Klabin SA Non-Cum Perp Pfd Registered Shs,"R$ 4,01",,,"17,54","1,71","-35,55%","-13,29%","-0,50%","-0,50%",2.976.000,21/02/2026 21:06`;
+
+// Dados de exemplo para desenvolvimento (serão sobrescritos pela API)
+export const MOCK_OPTIONS_DATA: any = {
+    "LJQQ3": [
+        { "ticker": "LJQQ3C218", "tipo": "CALL", "strike": 2.19, "preco": 0.41, "vencimento": "2026-03-16" },
+        { "ticker": "LJQQ3C230", "tipo": "CALL", "strike": 2.31, "preco": 0.25, "vencimento": "2026-03-16" },
+        { "ticker": "LJQQ3C243", "tipo": "CALL", "strike": 2.43, "preco": 0.07, "vencimento": "2026-03-16" },
+        { "ticker": "LJQQ3C255", "tipo": "CALL", "strike": 2.55, "preco": 0.01, "vencimento": "2026-03-16" },
+        { "ticker": "LJQQ3C267", "tipo": "CALL", "strike": 2.67, "preco": 0.01, "vencimento": "2026-03-16" },
+        { "ticker": "LJQQ3P218", "tipo": "PUT", "strike": 2.19, "preco": 0.01, "vencimento": "2026-03-16" },
+        { "ticker": "LJQQ3P230", "tipo": "PUT", "strike": 2.31, "preco": 0.01, "vencimento": "2026-03-16" },
+        { "ticker": "LJQQ3P243", "tipo": "PUT", "strike": 2.43, "preco": 0.01, "vencimento": "2026-03-16" },
+        { "ticker": "LJQQ3P255", "tipo": "PUT", "strike": 2.55, "preco": 0.25, "vencimento": "2026-03-16" },
+        { "ticker": "LJQQ3P267", "tipo": "PUT", "strike": 2.67, "preco": 0.41, "vencimento": "2026-03-16" }
+    ]
+};
