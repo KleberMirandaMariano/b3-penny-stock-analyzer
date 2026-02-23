@@ -495,7 +495,7 @@ export default function App() {
                                       <TrendingUp className="w-4 h-4 text-emerald-500" />
                                       <h4 className="text-[10px] font-bold uppercase tracking-widest text-emerald-600">Opções CALL (Compra)</h4>
                                     </div>
-                                    <span className="text-[10px] font-mono text-[#141414]/40 uppercase">Venc: {stock.opcoes?.[0]?.vencimento ? new Date(stock.opcoes[0].vencimento).toLocaleDateString('pt-BR') : '-'}</span>
+                                    <span className="text-[10px] font-mono text-[#141414]/40 uppercase">Venc: {stock.opcoes?.find(o => o.tipo === 'CALL')?.vencimento ? new Date(stock.opcoes.find(o => o.tipo === 'CALL')!.vencimento).toLocaleDateString('pt-BR') : '-'}</span>
                                   </div>
                                   <div className="bg-white rounded-xl border border-[#141414]/5 overflow-hidden">
                                     <table className="w-full text-left text-xs">
@@ -529,7 +529,7 @@ export default function App() {
                                       <TrendingDown className="w-4 h-4 text-rose-500" />
                                       <h4 className="text-[10px] font-bold uppercase tracking-widest text-rose-600">Opções PUT (Venda)</h4>
                                     </div>
-                                    <span className="text-[10px] font-mono text-[#141414]/40 uppercase">Venc: {stock.opcoes?.[0]?.vencimento ? new Date(stock.opcoes[0].vencimento).toLocaleDateString('pt-BR') : '-'}</span>
+                                    <span className="text-[10px] font-mono text-[#141414]/40 uppercase">Venc: {stock.opcoes?.find(o => o.tipo === 'PUT')?.vencimento ? new Date(stock.opcoes.find(o => o.tipo === 'PUT')!.vencimento).toLocaleDateString('pt-BR') : '-'}</span>
                                   </div>
                                   <div className="bg-white rounded-xl border border-[#141414]/5 overflow-hidden">
                                     <table className="w-full text-left text-xs">

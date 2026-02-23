@@ -16,16 +16,19 @@ Uso:
 """
 
 import argparse
+import io
 import json
 import logging
 import math
 import os
 import subprocess
 import sys
+import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import requests
 import yfinance as yf
 
 # ---------------------------------------------------------------------------
@@ -98,7 +101,179 @@ def graham_upside(eps, bvps, price) -> float | None:
 
 
 # ---------------------------------------------------------------------------
-# Etapa 1 – Lista de tickers (rb3 R script ou fallback)
+# COTAHIST em Python (fallback quando R/rb3 não está disponível)
+# ---------------------------------------------------------------------------
+
+def _parse_cotahist_line(line: str) -> dict | None:
+    """Parseia uma linha do arquivo COTAHIST (layout fixo B3)."""
+    if len(line) < 245:
+        return None
+    tipreg = line[0:2]
+    if tipreg != "01":
+        return None
+
+    tpmerc = line[24:27].strip()
+    if tpmerc not in ("010", "070", "080"):
+        return None
+
+    codneg = line[12:24].strip()
+    preult = int(line[108:121]) / 100.0
+    volume = int(line[170:188]) / 100.0
+
+    rec = {
+        "codneg": codneg,
+        "tpmerc": tpmerc,
+        "preult": preult,
+        "volume": volume,
+    }
+
+    if tpmerc in ("070", "080"):
+        preexe = int(line[188:201]) / 100.0
+        datven_raw = line[202:210].strip()
+        try:
+            datven = datetime.strptime(datven_raw, "%Y%m%d").strftime("%Y-%m-%d")
+        except ValueError:
+            datven = None
+        rec["preexe"] = preexe
+        rec["datven"] = datven
+        rec["tipo"] = "CALL" if tpmerc == "070" else "PUT"
+
+    return rec
+
+
+def _download_cotahist_daily(target_date: datetime | None = None) -> str | None:
+    """
+    Baixa o arquivo COTAHIST diário da B3.
+    Tenta os últimos 5 dias úteis caso o dia solicitado não esteja disponível.
+    """
+    if target_date is None:
+        target_date = datetime.now()
+
+    urls_tried = []
+    for delta in range(6):
+        d = target_date - timedelta(days=delta)
+        # Pula fins de semana
+        if d.weekday() >= 5:
+            continue
+
+        date_str = d.strftime("%d%m%Y")
+        url = f"https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_D{date_str}.ZIP"
+        urls_tried.append(url)
+
+        try:
+            log.info("Tentando baixar COTAHIST: %s", url)
+            resp = requests.get(url, timeout=30)
+            if resp.status_code == 200 and len(resp.content) > 500:
+                with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+                    names = zf.namelist()
+                    if not names:
+                        continue
+                    content = zf.read(names[0]).decode("latin-1")
+                    log.info("COTAHIST baixado: %s (%d bytes)", d.strftime("%Y-%m-%d"), len(content))
+                    return content
+        except Exception as exc:
+            log.debug("Falha ao baixar %s: %s", url, exc)
+
+    log.warning("Não foi possível baixar COTAHIST de nenhuma data recente. URLs tentadas: %s", urls_tried)
+    return None
+
+
+def fetch_cotahist_python(max_preco: float = 15.0) -> dict | None:
+    """
+    Substituto Python puro do script R (rb3).
+    Baixa e parseia o COTAHIST diário da B3, retornando ações e opções.
+    """
+    raw = _download_cotahist_daily()
+    if not raw:
+        return None
+
+    acoes = []
+    opcoes = []
+    data_ref = None
+
+    for line in raw.splitlines():
+        if len(line) < 245:
+            continue
+
+        rec = _parse_cotahist_line(line)
+        if not rec:
+            continue
+
+        # Extrai data de referência da primeira linha de dados
+        if data_ref is None:
+            try:
+                data_ref = datetime.strptime(line[2:10], "%Y%m%d").strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+
+        if rec["tpmerc"] == "010":
+            # Ação à vista
+            if 0 < rec["preult"] <= max_preco:
+                acoes.append({
+                    "ticker": rec["codneg"],
+                    "preco": rec["preult"],
+                    "volume": rec["volume"],
+                })
+        elif rec["tpmerc"] in ("070", "080"):
+            # Inferir ticker_objeto: primeiros 4 chars + número (ex: TASA3 → TASA)
+            base = rec["codneg"][:4]
+            opcoes.append({
+                "ticker": rec["codneg"],
+                "ticker_objeto": base,
+                "tipo": rec["tipo"],
+                "preco": rec["preult"],
+                "strike": rec["preexe"],
+                "vencimento": rec["datven"],
+            })
+
+    if not acoes:
+        log.warning("COTAHIST Python: nenhuma ação encontrada.")
+        return None
+
+    # Casar ticker_objeto com tickers reais das ações (pode haver múltiplos: TASA3, TASA4)
+    prefix_to_tickers: dict[str, list[str]] = {}
+    for a in acoes:
+        prefix = a["ticker"][:4]
+        if prefix not in prefix_to_tickers:
+            prefix_to_tickers[prefix] = []
+        if a["ticker"] not in prefix_to_tickers[prefix]:
+            prefix_to_tickers[prefix].append(a["ticker"])
+
+    opcoes_filtradas = []
+    for o in opcoes:
+        tickers_reais = prefix_to_tickers.get(o["ticker_objeto"], [])
+        for real_ticker in tickers_reais:
+            opcoes_filtradas.append({
+                **o,
+                "ticker_objeto": real_ticker,
+            })
+
+    if not data_ref:
+        data_ref = datetime.now().strftime("%Y-%m-%d")
+
+    result = {
+        "atualizadoEm": datetime.now().strftime("%d/%m/%Y %H:%M"),
+        "data_referencia": data_ref,
+        "fonte": "cotahist-python",
+        "total": len(acoes),
+        "acoes": acoes,
+        "opcoes": opcoes_filtradas,
+    }
+
+    # Salva em cache para uso posterior
+    try:
+        COTAHIST_JSON.parent.mkdir(parents=True, exist_ok=True)
+        with open(COTAHIST_JSON, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+        log.info("COTAHIST Python salvo: %d ações, %d opções", len(acoes), len(opcoes_filtradas))
+    except Exception as exc:
+        log.warning("Erro ao salvar COTAHIST JSON: %s", exc)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Etapa 1 – Lista de tickers (rb3 R script ou fallback Python)
 # ---------------------------------------------------------------------------
 
 def run_r_script() -> dict | None:
@@ -390,8 +565,13 @@ def enrich_with_options(stocks: list[dict], cotahist: dict | None) -> list[dict]
     Filtra pelo próximo vencimento disponível.
     """
     if not cotahist or "opcoes" not in cotahist:
+        # Sem COTAHIST – usa opções do yfinance se existirem
         for s in stocks:
-            s["opcoes"] = []
+            opcoes_yf = s.pop("opcoes_yf", [])
+            s["opcoes"] = sorted(opcoes_yf, key=lambda x: x["strike"] or 0) if opcoes_yf else []
+        yf_count = sum(1 for s in stocks if s["opcoes"])
+        if yf_count:
+            log.info("Opções yfinance vinculadas a %d ações (sem COTAHIST)", yf_count)
         return stocks
 
     opcoes_raw = cotahist["opcoes"]
@@ -411,44 +591,47 @@ def enrich_with_options(stocks: list[dict], cotahist: dict | None) -> list[dict]
             s["opcoes"] = []
         return stocks
 
-    # Identifica o próximo vencimento (o mais próximo que seja no futuro ou hoje)
-    vencimentos = sorted(list(set(o["vencimento"] for o in opcoes_data if o["vencimento"])))
     hoje = datetime.now().strftime("%Y-%m-%d")
-    proximo_vencimento = None
-    for v in vencimentos:
-        if v >= hoje:
-            proximo_vencimento = v
-            break
 
-    if not proximo_vencimento:
-        proximo_vencimento = vencimentos[-1] if vencimentos else None
-
-    log.info("Próximo vencimento identificado: %s", proximo_vencimento)
-
-    # Agrupar
-    mapa_opcoes: dict[str, list] = {}
+    # Agrupar todas as opções futuras por ticker_objeto
+    mapa_todas: dict[str, list] = {}
     for o in opcoes_data:
-        if o["vencimento"] != proximo_vencimento:
+        venc = o.get("vencimento")
+        if not venc or venc < hoje:
             continue
-        
+
         tik_obj = str(o["ticker_objeto"]).strip().upper()
-        if tik_obj not in mapa_opcoes:
-            mapa_opcoes[tik_obj] = []
-        
-        mapa_opcoes[tik_obj].append({
+        if tik_obj not in mapa_todas:
+            mapa_todas[tik_obj] = []
+
+        mapa_todas[tik_obj].append({
             "ticker": o["ticker"],
             "tipo": o["tipo"],
             "strike": _safe_round(o["strike"]),
             "preco": _safe_round(o["preco"]),
-            "vencimento": o["vencimento"]
+            "vencimento": venc,
         })
+
+    # Para cada ação, seleciona opções do próximo vencimento por tipo (CALL e PUT separados)
+    mapa_opcoes: dict[str, list] = {}
+    for tik_obj, opts in mapa_todas.items():
+        selected = []
+        for tipo in ("CALL", "PUT"):
+            tipo_opts = [o for o in opts if o["tipo"] == tipo]
+            if not tipo_opts:
+                continue
+            vencimentos = sorted(set(o["vencimento"] for o in tipo_opts))
+            proximo = vencimentos[0]
+            selected.extend(o for o in tipo_opts if o["vencimento"] == proximo)
+        if selected:
+            mapa_opcoes[tik_obj] = selected
 
     for s in stocks:
         tik = s["ticker"].upper()
-        # Prioridade: RB3 > yfinance > Vazio
+        # Prioridade: COTAHIST > yfinance > Vazio
         opcoes_rb3 = mapa_opcoes.get(tik, [])
         opcoes_yf = s.pop("opcoes_yf", [])
-        
+
         if opcoes_rb3:
             s["opcoes"] = sorted(opcoes_rb3, key=lambda x: x["strike"] or 0)
         else:
@@ -466,11 +649,11 @@ def save(stocks: list[dict], cotahist: dict | None):
     """Salva o JSON final em public/stocks.json."""
     stocks_sorted = sorted(stocks, key=lambda s: -(s.get("volume") or 0))
 
-    fonte = (
-        "rb3 (COTAHIST) + yfinance"
-        if cotahist
-        else "yfinance (R/rb3 indisponível)"
-    )
+    if cotahist:
+        src = cotahist.get("fonte", "cotahist")
+        fonte = f"{src} + yfinance"
+    else:
+        fonte = "yfinance (COTAHIST indisponível)"
     ref_date = (
         cotahist.get("data_referencia", "")
         if cotahist
@@ -511,8 +694,11 @@ def main():
     log.info("=== Iniciando atualização de dados B3 ===")
     log.info("Filtro: preço ≤ R$ %.2f | workers: %d", args.max_preco, args.workers)
 
-    # 1. Dados COTAHIST via R/rb3
+    # 1. Dados COTAHIST via R/rb3 (primário) ou Python (fallback)
     cotahist = run_r_script()
+    if not cotahist:
+        log.info("Tentando fallback: COTAHIST via Python...")
+        cotahist = fetch_cotahist_python(max_preco=args.max_preco + 5)
 
     # 2. Lista de tickers
     tickers = get_ticker_list(cotahist, args.max_preco)
