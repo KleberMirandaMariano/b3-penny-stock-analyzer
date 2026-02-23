@@ -52,7 +52,7 @@ function generateHistory(currentPrice: number, var5y: number | null) {
 
   return history.map((point, idx) => ({
     ...point,
-    ma50:  idx >= 50  ? history.slice(idx - 50,  idx).reduce((a, p) => a + p.price, 0) / 50  : null,
+    ma50: idx >= 50 ? history.slice(idx - 50, idx).reduce((a, p) => a + p.price, 0) / 50 : null,
     ma200: idx >= 199 ? history.slice(idx - 200, idx).reduce((a, p) => a + p.price, 0) / 200 : null,
   }));
 }
@@ -61,17 +61,27 @@ function generateHistory(currentPrice: number, var5y: number | null) {
 // App
 // ---------------------------------------------------------------------------
 export default function App() {
-  const [response, setResponse]       = useState<StocksResponse | null>(null);
-  const [loading, setLoading]         = useState(true);
-  const [error, setError]             = useState<string | null>(null);
-  const [refreshing, setRefreshing]   = useState(false);
-  const [updateMsg, setUpdateMsg]     = useState<string | null>(null);
+  const [response, setResponse] = useState<StocksResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [updateMsg, setUpdateMsg] = useState<string | null>(null);
 
-  const [searchTerm, setSearchTerm]   = useState('');
-  const [sortConfig, setSortConfig]   = useState<{ key: keyof StockData; direction: 'asc' | 'desc' } | null>(
+  const [searchTerm, setSearchTerm] = useState('');
+  const [sortConfig, setSortConfig] = useState<{ key: keyof StockData; direction: 'asc' | 'desc' } | null>(
     { key: 'varDia', direction: 'desc' }
   );
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
+  const [expandedTickers, setExpandedTickers] = useState<Set<string>>(new Set());
+
+  const toggleExpand = (ticker: string) => {
+    setExpandedTickers((prev) => {
+      const next = new Set(prev);
+      if (next.has(ticker)) next.delete(ticker);
+      else next.add(ticker);
+      return next;
+    });
+  };
 
   // ---- carregamento inicial ------------------------------------------------
   const loadData = useCallback(async () => {
@@ -111,9 +121,9 @@ export default function App() {
     }
   };
 
-  const allStocks  = response?.stocks ?? [];
-  const isLive     = response?.isLive ?? false;
-  const fonte      = response?.fonte  ?? '';
+  const allStocks = response?.stocks ?? [];
+  const isLive = response?.isLive ?? false;
+  const fonte = response?.fonte ?? '';
   const lastUpdate = response?.lastUpdate ?? allStocks[0]?.ultimaAtualizacao ?? '';
 
   // ---- ação selecionada ----------------------------------------------------
@@ -155,9 +165,9 @@ export default function App() {
     if (allStocks.length === 0)
       return { avgPrice: 0, topGainer: null, topLoser: null, pieData: [] };
 
-    const avgPrice  = allStocks.reduce((a, s) => a + s.preco, 0) / allStocks.length;
+    const avgPrice = allStocks.reduce((a, s) => a + s.preco, 0) / allStocks.length;
     const topGainer = [...allStocks].sort((a, b) => (b.varDia ?? -999) - (a.varDia ?? -999))[0];
-    const topLoser  = [...allStocks].sort((a, b) => (a.varDia ?? 999)  - (b.varDia ?? 999))[0];
+    const topLoser = [...allStocks].sort((a, b) => (a.varDia ?? 999) - (b.varDia ?? 999))[0];
 
     const sectorMap = allStocks.reduce<Record<string, number>>((acc, s) => {
       acc[s.setor] = (acc[s.setor] || 0) + 1;
@@ -283,8 +293,8 @@ export default function App() {
 
         {/* Stats Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard label="Total de Ativos"  value={allStocks.length}                  icon={<Layers className="w-4 h-4" />} />
-          <StatCard label="Preço Médio"       value={`R$ ${stats.avgPrice.toFixed(2)}`} icon={<DollarSign className="w-4 h-4" />} />
+          <StatCard label="Total de Ativos" value={allStocks.length} icon={<Layers className="w-4 h-4" />} />
+          <StatCard label="Preço Médio" value={`R$ ${stats.avgPrice.toFixed(2)}`} icon={<DollarSign className="w-4 h-4" />} />
           <StatCard
             label="Maior Alta (Dia)"
             value={stats.topGainer?.ticker ?? '-'}
@@ -366,7 +376,7 @@ export default function App() {
                         <YAxis domain={['auto', 'auto']} axisLine={false} tickLine={false} tick={{ fontSize: 10 }} orientation="right" />
                         <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '12px' }} />
                         <Area type="monotone" dataKey="price" fill="#f3f4f6" stroke="#141414" strokeWidth={1} fillOpacity={0.5} />
-                        <Line type="monotone" dataKey="ma50"  stroke="#3b82f6" strokeWidth={2} dot={false} />
+                        <Line type="monotone" dataKey="ma50" stroke="#3b82f6" strokeWidth={2} dot={false} />
                         <Line type="monotone" dataKey="ma200" stroke="#f97316" strokeWidth={2} dot={false} />
                       </ComposedChart>
                     </ResponsiveContainer>
@@ -411,48 +421,146 @@ export default function App() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#F5F5F4]/50 border-b border-[#141414]/5">
-                  <TableHead label="Ticker"  sortKey="ticker"       onSort={handleSort} />
-                  <TableHead label="Empresa" sortKey="empresa"      onSort={handleSort} />
-                  <TableHead label="Preço"   sortKey="preco"        onSort={handleSort} />
-                  <TableHead label="Setor"   sortKey="setor"        onSort={handleSort} />
-                  <TableHead label="Var. Dia"    sortKey="varDia"       onSort={handleSort} />
-                  <TableHead label="Var. Semana" sortKey="varSemana"    onSort={handleSort} />
-                  <TableHead label="P/L"     sortKey="pl"           onSort={handleSort} />
-                  <TableHead label="P/VP"    sortKey="pvp"          onSort={handleSort} />
-                  <TableHead label="Upside"  sortKey="upsideGraham" onSort={handleSort} />
+                  <TableHead label="Ticker" sortKey="ticker" onSort={handleSort} />
+                  <TableHead label="Empresa" sortKey="empresa" onSort={handleSort} />
+                  <TableHead label="Preço" sortKey="preco" onSort={handleSort} />
+                  <TableHead label="Setor" sortKey="setor" onSort={handleSort} />
+                  <TableHead label="Var. Dia" sortKey="varDia" onSort={handleSort} />
+                  <TableHead label="Var. Semana" sortKey="varSemana" onSort={handleSort} />
+                  <TableHead label="P/L" sortKey="pl" onSort={handleSort} />
+                  <TableHead label="P/VP" sortKey="pvp" onSort={handleSort} />
+                  <TableHead label="Upside" sortKey="upsideGraham" onSort={handleSort} />
                 </tr>
               </thead>
               <tbody>
                 <AnimatePresence mode="popLayout">
                   {filteredStocks.map((stock) => (
-                    <motion.tr
-                      layout
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      key={stock.ticker}
-                      onClick={() => setSelectedTicker(stock.ticker)}
-                      className={cn(
-                        "border-b border-[#141414]/5 hover:bg-[#F5F5F4]/30 transition-colors cursor-pointer",
-                        selectedTicker === stock.ticker && "bg-blue-50/50"
-                      )}
-                    >
-                      <td className="px-6 py-4 font-mono font-bold text-sm">{stock.ticker}</td>
-                      <td className="px-6 py-4 text-sm text-[#141414]/70 truncate max-w-[200px]">{stock.empresa}</td>
-                      <td className="px-6 py-4 font-mono text-sm">R$ {stock.preco.toFixed(2)}</td>
-                      <td className="px-6 py-4 text-xs uppercase tracking-wider text-[#141414]/50">{stock.setor}</td>
-                      <td className={cn("px-6 py-4 font-mono text-sm", varClass(stock.varDia))}>
-                        {fmtPct(stock.varDia)}
-                      </td>
-                      <td className={cn("px-6 py-4 font-mono text-sm", varClass(stock.varSemana))}>
-                        {fmtPct(stock.varSemana)}
-                      </td>
-                      <td className="px-6 py-4 font-mono text-sm">{stock.pl?.toFixed(2) ?? '-'}</td>
-                      <td className="px-6 py-4 font-mono text-sm">{stock.pvp?.toFixed(2) ?? '-'}</td>
-                      <td className={cn("px-6 py-4 font-mono text-sm", varClass(stock.upsideGraham))}>
-                        {fmtPct(stock.upsideGraham)}
-                      </td>
-                    </motion.tr>
+                    <React.Fragment key={stock.ticker}>
+                      <motion.tr
+                        layout
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        onClick={() => {
+                          setSelectedTicker(stock.ticker);
+                          toggleExpand(stock.ticker);
+                        }}
+                        className={cn(
+                          "border-b border-[#141414]/5 hover:bg-[#F5F5F4]/30 transition-colors cursor-pointer",
+                          selectedTicker === stock.ticker && "bg-blue-50/20"
+                        )}
+                      >
+                        <td className="px-6 py-4 font-mono font-bold text-sm">
+                          <div className="flex items-center gap-2">
+                            <motion.span
+                              animate={{ rotate: expandedTickers.has(stock.ticker) ? 180 : 0 }}
+                              className="text-[#141414]/20"
+                            >
+                              ▾
+                            </motion.span>
+                            {stock.ticker}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-[#141414]/70 truncate max-w-[200px]">{stock.empresa}</td>
+                        <td className="px-6 py-4 font-mono text-sm">R$ {stock.preco.toFixed(2)}</td>
+                        <td className="px-6 py-4 text-xs uppercase tracking-wider text-[#141414]/50">{stock.setor}</td>
+                        <td className={cn("px-6 py-4 font-mono text-sm", varClass(stock.varDia))}>
+                          {fmtPct(stock.varDia)}
+                        </td>
+                        <td className={cn("px-6 py-4 font-mono text-sm", varClass(stock.varSemana))}>
+                          {fmtPct(stock.varSemana)}
+                        </td>
+                        <td className="px-6 py-4 font-mono text-sm">{stock.pl?.toFixed(2) ?? '-'}</td>
+                        <td className="px-6 py-4 font-mono text-sm">{stock.pvp?.toFixed(2) ?? '-'}</td>
+                        <td className={cn("px-6 py-4 font-mono text-sm", varClass(stock.upsideGraham))}>
+                          {fmtPct(stock.upsideGraham)}
+                        </td>
+                      </motion.tr>
+
+                      {/* Visão Detalhada de Opções */}
+                      <AnimatePresence>
+                        {expandedTickers.has(stock.ticker) && (
+                          <motion.tr
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="bg-[#FBFBFA]"
+                          >
+                            <td colSpan={9} className="px-6 py-8">
+                              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                {/* CALLS */}
+                                <div className="space-y-4">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                      <TrendingUp className="w-4 h-4 text-emerald-500" />
+                                      <h4 className="text-[10px] font-bold uppercase tracking-widest text-emerald-600">Opções CALL (Compra)</h4>
+                                    </div>
+                                    <span className="text-[10px] font-mono text-[#141414]/40 uppercase">Venc: {stock.opcoes?.[0]?.vencimento ? new Date(stock.opcoes[0].vencimento).toLocaleDateString('pt-BR') : '-'}</span>
+                                  </div>
+                                  <div className="bg-white rounded-xl border border-[#141414]/5 overflow-hidden">
+                                    <table className="w-full text-left text-xs">
+                                      <thead className="bg-[#F5F5F4]/50 border-b border-[#141414]/5">
+                                        <tr>
+                                          <th className="px-4 py-2 font-bold text-[#141414]/40">Símbolo</th>
+                                          <th className="px-4 py-2 font-bold text-[#141414]/40">Strike</th>
+                                          <th className="px-4 py-2 font-bold text-[#141414]/40 text-right">Prêmio</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {stock.opcoes?.filter(o => o.tipo === 'CALL').map(opt => (
+                                          <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0">
+                                            <td className="px-4 py-2 font-mono font-bold">{opt.ticker}</td>
+                                            <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
+                                            <td className="px-4 py-2 font-mono text-right text-emerald-600 font-bold">R$ {opt.preco?.toFixed(2)}</td>
+                                          </tr>
+                                        ))}
+                                        {(!stock.opcoes || stock.opcoes.filter(o => o.tipo === 'CALL').length === 0) && (
+                                          <tr><td colSpan={3} className="px-4 py-4 text-center text-[#141414]/30">Nenhuma CALL disponível</td></tr>
+                                        )}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+
+                                {/* PUTS */}
+                                <div className="space-y-4">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                      <TrendingDown className="w-4 h-4 text-rose-500" />
+                                      <h4 className="text-[10px] font-bold uppercase tracking-widest text-rose-600">Opções PUT (Venda)</h4>
+                                    </div>
+                                    <span className="text-[10px] font-mono text-[#141414]/40 uppercase">Venc: {stock.opcoes?.[0]?.vencimento ? new Date(stock.opcoes[0].vencimento).toLocaleDateString('pt-BR') : '-'}</span>
+                                  </div>
+                                  <div className="bg-white rounded-xl border border-[#141414]/5 overflow-hidden">
+                                    <table className="w-full text-left text-xs">
+                                      <thead className="bg-[#F5F5F4]/50 border-b border-[#141414]/5">
+                                        <tr>
+                                          <th className="px-4 py-2 font-bold text-[#141414]/40">Símbolo</th>
+                                          <th className="px-4 py-2 font-bold text-[#141414]/40">Strike</th>
+                                          <th className="px-4 py-2 font-bold text-[#141414]/40 text-right">Prêmio</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {stock.opcoes?.filter(o => o.tipo === 'PUT').map(opt => (
+                                          <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0">
+                                            <td className="px-4 py-2 font-mono font-bold">{opt.ticker}</td>
+                                            <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
+                                            <td className="px-4 py-2 font-mono text-right text-rose-600 font-bold">R$ {opt.preco?.toFixed(2)}</td>
+                                          </tr>
+                                        ))}
+                                        {(!stock.opcoes || stock.opcoes.filter(o => o.tipo === 'PUT').length === 0) && (
+                                          <tr><td colSpan={3} className="px-4 py-4 text-center text-[#141414]/30">Nenhuma PUT disponível</td></tr>
+                                        )}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                          </motion.tr>
+                        )}
+                      </AnimatePresence>
+                    </React.Fragment>
                   ))}
                 </AnimatePresence>
               </tbody>

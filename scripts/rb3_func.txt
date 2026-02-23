@@ -1,0 +1,8 @@
+function (type = c("yearly", "monthly", "daily")) 
+{
+    type <- match.arg(type)
+    template <- template_retrieve(str_glue("b3-cotahist-{type}"))
+    template_dataset(template, layer = 2)
+}
+<bytecode: 0x00000147074202a8>
+<environment: namespace:rb3>

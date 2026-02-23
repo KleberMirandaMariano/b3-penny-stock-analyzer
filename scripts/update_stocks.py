@@ -107,10 +107,11 @@ def run_r_script() -> dict | None:
         log.warning("Script R não encontrado: %s", R_SCRIPT)
         return None
 
-    rscript = subprocess.run(
-        ["which", "Rscript"], capture_output=True, text=True
+    cmd = "where" if os.name == "nt" else "which"
+    rscript_check = subprocess.run(
+        [cmd, "Rscript"], capture_output=True, text=True
     )
-    if rscript.returncode != 0:
+    if rscript_check.returncode != 0:
         log.warning("Rscript não encontrado no PATH. Usando fallback yfinance.")
         return None
 
@@ -248,7 +249,7 @@ def fetch_stock(ticker: str, max_preco: float) -> dict | None:
 
         now_str = datetime.now(tz=timezone.utc).astimezone().strftime("%d/%m/%Y %H:%M")
 
-        return {
+        data = {
             "ticker":           ticker,
             "empresa":          nome,
             "preco":            _safe_round(price),
@@ -262,7 +263,46 @@ def fetch_stock(ticker: str, max_preco: float) -> dict | None:
             "varSemana":        var_semana,
             "volume":           _safe_int(info.get("volume") or info.get("regularMarketVolume")),
             "ultimaAtualizacao": now_str,
+            "opcoes":           [] 
         }
+
+        # --- Busca opções via yfinance (opicional/fallback) ---
+        try:
+            options_dates = yf_ticker.options
+            if options_dates:
+                next_expiry = options_dates[0]
+                chain = yf_ticker.option_chain(next_expiry)
+                
+                opcoes_yf = []
+                for _, row in chain.calls.iterrows():
+                    opcoes_yf.append({
+                        "ticker": row["contractSymbol"],
+                        "tipo": "CALL",
+                        "strike": _safe_round(row["strike"]),
+                        "preco": _safe_round(row["lastPrice"]),
+                        "vencimento": next_expiry
+                    })
+                for _, row in chain.puts.iterrows():
+                    opcoes_yf.append({
+                        "ticker": row["contractSymbol"],
+                        "tipo": "PUT",
+                        "strike": _safe_round(row["strike"]),
+                        "preco": _safe_round(row["lastPrice"]),
+                        "vencimento": next_expiry
+                    })
+                
+                # Limita a 10 opções (5 mais próximas do preço atual)
+                price_current = price
+                calls_sorted = sorted([o for o in opcoes_yf if o["tipo"] == "CALL"], 
+                                      key=lambda x: abs((x["strike"] or 0) - price_current))[:5]
+                puts_sorted = sorted([o for o in opcoes_yf if o["tipo"] == "PUT"], 
+                                     key=lambda x: abs((x["strike"] or 0) - price_current))[:5]
+                
+                data["opcoes_yf"] = sorted(calls_sorted + puts_sorted, key=lambda x: x["strike"] or 0)
+        except Exception as opt_exc:
+            log.debug("Erro ao buscar opções para %s: %s", ticker, opt_exc)
+
+        return data
     except Exception as exc:
         log.debug("Erro em %s: %s", ticker, exc)
         return None
@@ -344,6 +384,80 @@ def enrich_with_cotahist(stocks: list[dict], cotahist: dict | None) -> list[dict
     return stocks
 
 
+def enrich_with_options(stocks: list[dict], cotahist: dict | None) -> list[dict]:
+    """
+    Agrupa as opções por ticker_objeto e anexa ao dicionário da ação correspondente.
+    Filtra pelo próximo vencimento disponível.
+    """
+    if not cotahist or "opcoes" not in cotahist:
+        for s in stocks:
+            s["opcoes"] = []
+        return stocks
+
+    opcoes_raw = cotahist["opcoes"]
+    opcoes_data = []
+
+    if isinstance(opcoes_raw, list):
+        opcoes_data = opcoes_raw
+    elif isinstance(opcoes_raw, dict):
+        # Formato colunar jsonlite
+        keys = opcoes_raw.keys()
+        count = len(next(iter(opcoes_raw.values())))
+        for i in range(count):
+            opcoes_data.append({k: opcoes_raw[k][i] for k in keys})
+
+    if not opcoes_data:
+        for s in stocks:
+            s["opcoes"] = []
+        return stocks
+
+    # Identifica o próximo vencimento (o mais próximo que seja no futuro ou hoje)
+    vencimentos = sorted(list(set(o["vencimento"] for o in opcoes_data if o["vencimento"])))
+    hoje = datetime.now().strftime("%Y-%m-%d")
+    proximo_vencimento = None
+    for v in vencimentos:
+        if v >= hoje:
+            proximo_vencimento = v
+            break
+
+    if not proximo_vencimento:
+        proximo_vencimento = vencimentos[-1] if vencimentos else None
+
+    log.info("Próximo vencimento identificado: %s", proximo_vencimento)
+
+    # Agrupar
+    mapa_opcoes: dict[str, list] = {}
+    for o in opcoes_data:
+        if o["vencimento"] != proximo_vencimento:
+            continue
+        
+        tik_obj = str(o["ticker_objeto"]).strip().upper()
+        if tik_obj not in mapa_opcoes:
+            mapa_opcoes[tik_obj] = []
+        
+        mapa_opcoes[tik_obj].append({
+            "ticker": o["ticker"],
+            "tipo": o["tipo"],
+            "strike": _safe_round(o["strike"]),
+            "preco": _safe_round(o["preco"]),
+            "vencimento": o["vencimento"]
+        })
+
+    for s in stocks:
+        tik = s["ticker"].upper()
+        # Prioridade: RB3 > yfinance > Vazio
+        opcoes_rb3 = mapa_opcoes.get(tik, [])
+        opcoes_yf = s.pop("opcoes_yf", [])
+        
+        if opcoes_rb3:
+            s["opcoes"] = sorted(opcoes_rb3, key=lambda x: x["strike"] or 0)
+        else:
+            s["opcoes"] = sorted(opcoes_yf, key=lambda x: x["strike"] or 0)
+
+    log.info("Opções vinculadas a %d ações", len(mapa_opcoes))
+    return stocks
+
+
 # ---------------------------------------------------------------------------
 # Etapa 4 – Persistência
 # ---------------------------------------------------------------------------
@@ -413,6 +527,9 @@ def main():
 
     # 4. Enriquece com COTAHIST
     stocks = enrich_with_cotahist(stocks, cotahist)
+
+    # 4.1 Vincula opções
+    stocks = enrich_with_options(stocks, cotahist)
 
     # 5. Salva
     save(stocks, cotahist)
