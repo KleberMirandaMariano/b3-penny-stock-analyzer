@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { getStocks, triggerUpdate, type StocksResponse } from './services/stockService';
-import { cn, type StockData } from './utils';
+import { getStocks, getOptions, triggerUpdate, type StocksResponse } from './services/stockService';
+import { cn, type StockData, type OptionData } from './utils';
 import {
   TrendingUp,
   TrendingDown,
@@ -73,14 +73,26 @@ export default function App() {
   );
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const [expandedTickers, setExpandedTickers] = useState<Set<string>>(new Set());
+  const [optionsCache, setOptionsCache] = useState<Record<string, OptionData[]>>({});
+  const [loadingOptions, setLoadingOptions] = useState<string | null>(null);
 
-  const toggleExpand = (ticker: string) => {
+  const toggleExpand = async (ticker: string) => {
+    const isExpanded = expandedTickers.has(ticker);
+
     setExpandedTickers((prev) => {
       const next = new Set(prev);
       if (next.has(ticker)) next.delete(ticker);
       else next.add(ticker);
       return next;
     });
+
+    // Busca opções ao expandir (se ainda não tem no cache)
+    if (!isExpanded && !optionsCache[ticker]) {
+      setLoadingOptions(ticker);
+      const opcoes = await getOptions(ticker);
+      setOptionsCache((prev) => ({ ...prev, [ticker]: opcoes }));
+      setLoadingOptions(null);
+    }
   };
 
   // ---- carregamento inicial ------------------------------------------------
@@ -157,7 +169,7 @@ export default function App() {
         return 0;
       });
     }
-    return stocks;
+    return stocks.slice(0, 20);
   }, [allStocks, searchTerm, sortConfig]);
 
   // ---- estatísticas --------------------------------------------------------
@@ -477,9 +489,14 @@ export default function App() {
                         </td>
                       </motion.tr>
 
-                      {/* Visão Detalhada de Opções */}
+                      {/* Visão Detalhada de Opções (lazy-loaded) */}
                       <AnimatePresence>
-                        {expandedTickers.has(stock.ticker) && (
+                        {expandedTickers.has(stock.ticker) && (() => {
+                          const opts = optionsCache[stock.ticker];
+                          const isLoading = loadingOptions === stock.ticker || !opts;
+                          const calls = opts?.filter(o => o.tipo === 'CALL') ?? [];
+                          const puts = opts?.filter(o => o.tipo === 'PUT') ?? [];
+                          return (
                           <motion.tr
                             initial={{ opacity: 0, height: 0 }}
                             animate={{ opacity: 1, height: 'auto' }}
@@ -487,6 +504,12 @@ export default function App() {
                             className="bg-[#FBFBFA]"
                           >
                             <td colSpan={9} className="px-6 py-8">
+                              {isLoading ? (
+                                <div className="flex items-center justify-center gap-2 py-8 text-[#141414]/40">
+                                  <RefreshCw className="w-4 h-4 animate-spin" />
+                                  <span className="text-xs">Carregando opções...</span>
+                                </div>
+                              ) : (
                               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                                 {/* CALLS */}
                                 <div className="space-y-4">
@@ -495,7 +518,7 @@ export default function App() {
                                       <TrendingUp className="w-4 h-4 text-emerald-500" />
                                       <h4 className="text-[10px] font-bold uppercase tracking-widest text-emerald-600">Opções CALL (Compra)</h4>
                                     </div>
-                                    <span className="text-[10px] font-mono text-[#141414]/40 uppercase">Venc: {stock.opcoes?.find(o => o.tipo === 'CALL')?.vencimento ? new Date(stock.opcoes.find(o => o.tipo === 'CALL')!.vencimento).toLocaleDateString('pt-BR') : '-'}</span>
+                                    <span className="text-[10px] font-mono text-[#141414]/40 uppercase">Venc: {calls[0]?.vencimento ? new Date(calls[0].vencimento).toLocaleDateString('pt-BR') : '-'}</span>
                                   </div>
                                   <div className="bg-white rounded-xl border border-[#141414]/5 overflow-hidden">
                                     <table className="w-full text-left text-xs">
@@ -507,14 +530,14 @@ export default function App() {
                                         </tr>
                                       </thead>
                                       <tbody>
-                                        {stock.opcoes?.filter(o => o.tipo === 'CALL').map(opt => (
+                                        {calls.map(opt => (
                                           <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0">
                                             <td className="px-4 py-2 font-mono font-bold">{opt.ticker}</td>
                                             <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
                                             <td className="px-4 py-2 font-mono text-right text-emerald-600 font-bold">R$ {opt.preco?.toFixed(2)}</td>
                                           </tr>
                                         ))}
-                                        {(!stock.opcoes || stock.opcoes.filter(o => o.tipo === 'CALL').length === 0) && (
+                                        {calls.length === 0 && (
                                           <tr><td colSpan={3} className="px-4 py-4 text-center text-[#141414]/30">Nenhuma CALL disponível</td></tr>
                                         )}
                                       </tbody>
@@ -529,7 +552,7 @@ export default function App() {
                                       <TrendingDown className="w-4 h-4 text-rose-500" />
                                       <h4 className="text-[10px] font-bold uppercase tracking-widest text-rose-600">Opções PUT (Venda)</h4>
                                     </div>
-                                    <span className="text-[10px] font-mono text-[#141414]/40 uppercase">Venc: {stock.opcoes?.find(o => o.tipo === 'PUT')?.vencimento ? new Date(stock.opcoes.find(o => o.tipo === 'PUT')!.vencimento).toLocaleDateString('pt-BR') : '-'}</span>
+                                    <span className="text-[10px] font-mono text-[#141414]/40 uppercase">Venc: {puts[0]?.vencimento ? new Date(puts[0].vencimento).toLocaleDateString('pt-BR') : '-'}</span>
                                   </div>
                                   <div className="bg-white rounded-xl border border-[#141414]/5 overflow-hidden">
                                     <table className="w-full text-left text-xs">
@@ -541,14 +564,14 @@ export default function App() {
                                         </tr>
                                       </thead>
                                       <tbody>
-                                        {stock.opcoes?.filter(o => o.tipo === 'PUT').map(opt => (
+                                        {puts.map(opt => (
                                           <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0">
                                             <td className="px-4 py-2 font-mono font-bold">{opt.ticker}</td>
                                             <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
                                             <td className="px-4 py-2 font-mono text-right text-rose-600 font-bold">R$ {opt.preco?.toFixed(2)}</td>
                                           </tr>
                                         ))}
-                                        {(!stock.opcoes || stock.opcoes.filter(o => o.tipo === 'PUT').length === 0) && (
+                                        {puts.length === 0 && (
                                           <tr><td colSpan={3} className="px-4 py-4 text-center text-[#141414]/30">Nenhuma PUT disponível</td></tr>
                                         )}
                                       </tbody>
@@ -556,9 +579,11 @@ export default function App() {
                                   </div>
                                 </div>
                               </div>
+                              )}
                             </td>
                           </motion.tr>
-                        )}
+                          );
+                        })()}
                       </AnimatePresence>
                     </React.Fragment>
                   ))}

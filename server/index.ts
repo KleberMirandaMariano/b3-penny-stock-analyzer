@@ -22,7 +22,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.join(__dirname, '..');
 const PUBLIC_DIR = path.join(ROOT_DIR, 'public');
 const DIST_DIR = path.join(ROOT_DIR, 'dist');
+const DATA_DIR = path.join(ROOT_DIR, 'data');
 const STOCKS_FILE = path.join(PUBLIC_DIR, 'stocks.json');
+const COTAHIST_FILE = path.join(DATA_DIR, 'cotahist.json');
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 3001);
@@ -99,6 +101,48 @@ app.get('/api/status', (req: Request, res: Response) => {
     totalAcoes: data.totalAcoes ?? 0,
     updateInProgress,
   });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/options/:ticker
+// ---------------------------------------------------------------------------
+app.get('/api/options/:ticker', (req: Request, res: Response) => {
+  const ticker = req.params.ticker.toUpperCase();
+  const prefix = ticker.slice(0, 4);
+
+  if (!existsSync(COTAHIST_FILE)) {
+    res.json({ opcoes: [] });
+    return;
+  }
+
+  try {
+    const cotahist = JSON.parse(readFileSync(COTAHIST_FILE, 'utf-8'));
+    const allOpts: any[] = cotahist.opcoes ?? [];
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Filtra opções futuras para este ticker
+    const matched = allOpts.filter((o: any) => {
+      const obj = String(o.ticker_objeto ?? '').toUpperCase();
+      return obj === ticker && o.vencimento >= today;
+    });
+
+    // Seleciona próximo vencimento por tipo (CALL e PUT separados)
+    const result: any[] = [];
+    for (const tipo of ['CALL', 'PUT']) {
+      const tipoOpts = matched.filter((o: any) => o.tipo === tipo);
+      if (tipoOpts.length === 0) continue;
+      const vencimentos = [...new Set(tipoOpts.map((o: any) => o.vencimento))].sort();
+      const proximo = vencimentos[0];
+      result.push(...tipoOpts.filter((o: any) => o.vencimento === proximo));
+    }
+
+    // Ordena por strike
+    result.sort((a: any, b: any) => (a.strike ?? 0) - (b.strike ?? 0));
+
+    res.json({ opcoes: result });
+  } catch {
+    res.json({ opcoes: [] });
+  }
 });
 
 // ---------------------------------------------------------------------------

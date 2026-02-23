@@ -1,6 +1,6 @@
 import Papa from 'papaparse';
 import { RAW_STOCK_DATA, MOCK_OPTIONS_DATA } from '../data';
-import { StockData, parseCurrency, parsePercentage, parseNumber } from '../utils';
+import { StockData, OptionData, parseCurrency, parsePercentage, parseNumber } from '../utils';
 
 export interface StocksResponse {
   stocks: StockData[];
@@ -91,6 +91,26 @@ export async function getStocks(): Promise<StocksResponse> {
       fonte: 'CSV estático (API indisponível)',
       isLive: false,
     };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Busca opções de uma ação específica (lazy-loading)
+// ---------------------------------------------------------------------------
+export async function getOptions(ticker: string): Promise<OptionData[]> {
+  try {
+    const res = await fetch(`/api/options/${ticker}`, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.opcoes ?? []).map((o: any) => ({
+      ticker: o.ticker ?? '',
+      tipo: o.tipo ?? 'CALL',
+      strike: o.strike ?? null,
+      preco: o.preco ?? null,
+      vencimento: o.vencimento ?? '',
+    }));
+  } catch {
+    return [];
   }
 }
 
