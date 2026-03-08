@@ -76,7 +76,8 @@ function parseApiResponse(data: any): StocksResponse {
 // ---------------------------------------------------------------------------
 export async function getStocks(): Promise<StocksResponse> {
   try {
-    const res = await fetch(`${API_BASE}/api/stocks`, { signal: AbortSignal.timeout(8000) });
+    // Render free tier pode demorar até 50s no cold start
+    const res = await fetch(`${API_BASE}/api/stocks`, { signal: AbortSignal.timeout(60_000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const parsed = parseApiResponse(data);
@@ -139,7 +140,7 @@ export async function triggerUpdate(ticker?: string): Promise<{ ok: boolean; men
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ maxPreco: 10.0, ticker }),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(60_000), // aguarda cold start do Render
     });
     const body = await res.json();
     return { ok: res.ok, mensagem: body.mensagem ?? body.error };
