@@ -126,18 +126,24 @@ app.get('/api/options/:ticker', (req: Request, res: Response) => {
       return obj === ticker && o.vencimento >= today;
     });
 
-    // Seleciona próximo vencimento por tipo (CALL e PUT separados)
+    // Seleciona próximos 8 vencimentos por tipo (CALL e PUT separados)
     const result: any[] = [];
     for (const tipo of ['CALL', 'PUT']) {
       const tipoOpts = matched.filter((o: any) => o.tipo === tipo);
       if (tipoOpts.length === 0) continue;
       const vencimentos = [...new Set(tipoOpts.map((o: any) => o.vencimento))].sort();
-      const proximo = vencimentos[0];
-      result.push(...tipoOpts.filter((o: any) => o.vencimento === proximo));
+      for (const v of vencimentos.slice(0, 8)) {
+        result.push(...tipoOpts.filter((o: any) => o.vencimento === v));
+      }
     }
 
-    // Ordena por strike
-    result.sort((a: any, b: any) => (a.strike ?? 0) - (b.strike ?? 0));
+    // Ordena por vencimento e depois por strike
+    result.sort((a: any, b: any) => {
+      if (a.vencimento !== b.vencimento) {
+        return a.vencimento.localeCompare(b.vencimento);
+      }
+      return (a.strike ?? 0) - (b.strike ?? 0);
+    });
 
     res.json({ opcoes: result });
   } catch {
@@ -155,10 +161,16 @@ app.post('/api/update', (req: Request, res: Response) => {
   }
 
   const maxPreco: string = req.body?.maxPreco ? String(req.body.maxPreco) : '10.0';
+  const ticker: string | undefined = req.body?.ticker ? String(req.body.ticker) : undefined;
   updateInProgress = true;
   res.json({ success: true, mensagem: 'Atualização iniciada. Consulte GET /api/status.' });
 
-  runUpdateScript([`--max-preco ${maxPreco}`], (err, stdout, stderr) => {
+  const args: string[] = [`--max-preco ${maxPreco}`];
+  if (ticker) {
+    args.push(`--ticker ${ticker}`);
+  }
+
+  runUpdateScript(args, (err, stdout, stderr) => {
     updateInProgress = false;
     if (err) {
       console.error('[update] Erro:', stderr || err.message);

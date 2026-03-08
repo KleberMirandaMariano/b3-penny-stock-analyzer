@@ -55,13 +55,13 @@ if (!"tipo_mercado" %in% names(ch)) {
 
 cat(sprintf("Ativos Totais: %d | Vista: %d | Opções: %d\n", nrow(ch), nrow(equity), nrow(options_raw)))
 
-# Filtra ações (penny stocks)
+# Filtra ações
 penny_stocks <- equity %>%
   mutate(preco = as.numeric(preco_ultimo)) %>%
-  filter(!is.na(preco), preco > 0, preco <= max_preco) %>%
+  filter(!is.na(preco), preco > 0) %>%
   rename(ticker = cod_negociacao)
 
-# Filtra opções dos ativos penny
+# Filtra opções dos ativos
 options_data <- options_raw %>%
   transmute(
     ticker = cod_negociacao,

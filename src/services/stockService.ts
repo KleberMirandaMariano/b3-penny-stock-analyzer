@@ -117,12 +117,12 @@ export async function getOptions(ticker: string): Promise<OptionData[]> {
 // ---------------------------------------------------------------------------
 // Dispara atualização na API (não-bloqueante)
 // ---------------------------------------------------------------------------
-export async function triggerUpdate(): Promise<{ ok: boolean; mensagem?: string }> {
+export async function triggerUpdate(ticker?: string): Promise<{ ok: boolean; mensagem?: string }> {
   try {
     const res = await fetch('/api/update', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ maxPreco: 10.0 }),
+      body: JSON.stringify({ maxPreco: 10.0, ticker }),
       signal: AbortSignal.timeout(5000),
     });
     const body = await res.json();

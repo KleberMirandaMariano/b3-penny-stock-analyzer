@@ -102,6 +102,15 @@ export default function App() {
     try {
       const res = await getStocks();
       setResponse(res);
+      
+      const newCache: Record<string, OptionData[]> = {};
+      res.stocks.forEach(s => {
+        if (s.opcoes && s.opcoes.length > 0) {
+          newCache[s.ticker] = s.opcoes;
+        }
+      });
+      setOptionsCache(prev => ({ ...prev, ...newCache }));
+
       if (!selectedTicker && res.stocks.length > 0) {
         setSelectedTicker(res.stocks[0].ticker);
       }
@@ -110,20 +119,30 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedTicker]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => { loadData(); }, []);
 
   // ---- atualização via API -------------------------------------------------
   const handleRefresh = async () => {
     if (refreshing) return;
+    
+    const targetTicker = searchTerm.trim() ? searchTerm.trim().toUpperCase() : undefined;
+    
     setRefreshing(true);
-    setUpdateMsg('Solicitando atualização...');
-    const { ok, mensagem } = await triggerUpdate();
-    setUpdateMsg(ok ? '✓ Atualização iniciada — recarregando em 5s' : `Erro: ${mensagem}`);
+    setUpdateMsg(targetTicker ? `Pesquisando ${targetTicker}...` : 'Solicitando pesquisa geral...');
+    const { ok, mensagem } = await triggerUpdate(targetTicker);
+    setUpdateMsg(ok ? '✓ Pesquisa concluída — recarregando em breve' : `Erro: ${mensagem}`);
+    
     if (ok) {
       setTimeout(async () => {
         await loadData();
+        if (targetTicker) {
+          setSelectedTicker(targetTicker);
+          if (!expandedTickers.has(targetTicker)) {
+            setExpandedTickers(prev => new Set(prev).add(targetTicker));
+          }
+        }
         setRefreshing(false);
         setUpdateMsg(null);
       }, 5000);
@@ -265,20 +284,20 @@ export default function App() {
               />
             </div>
 
-            {/* Botão de atualizar */}
+            {/* Botão de pesquisar */}
             <button
               onClick={handleRefresh}
               disabled={refreshing}
-              title="Atualizar dados via rb3/yfinance"
+              title={searchTerm.trim() ? `Pesquisar e atualizar dados de ${searchTerm.toUpperCase()}` : "Pesquisar e atualizar todos os dados"}
               className={cn(
-                "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all border",
+                "flex items-center gap-2 px-6 py-2.5 rounded-full text-sm font-bold transition-all border",
                 refreshing
-                  ? "bg-[#141414]/5 text-[#141414]/40 border-[#141414]/10 cursor-not-allowed"
-                  : "bg-[#141414] text-white border-[#141414] hover:bg-[#141414]/80"
+                  ? "bg-[#141414] text-white/50 border-[#141414] cursor-not-allowed shadow-none"
+                  : "bg-[#141414] text-white border-[#141414] hover:bg-[#141414]/90 shadow-md hover:shadow-lg hover:-translate-y-0.5"
               )}
             >
-              <RefreshCw className={cn("w-3.5 h-3.5", refreshing && "animate-spin")} />
-              {refreshing ? 'Atualizando...' : 'Atualizar'}
+              <RefreshCw className={cn("w-4 h-4", refreshing && "animate-spin")} />
+              {refreshing ? 'Pesquisando...' : 'Pesquisar'}
             </button>
 
             {/* Última atualização */}
@@ -491,99 +510,14 @@ export default function App() {
 
                       {/* Visão Detalhada de Opções (lazy-loaded) */}
                       <AnimatePresence>
-                        {expandedTickers.has(stock.ticker) && (() => {
-                          const opts = optionsCache[stock.ticker];
-                          const isLoading = loadingOptions === stock.ticker || !opts;
-                          const calls = opts?.filter(o => o.tipo === 'CALL') ?? [];
-                          const puts = opts?.filter(o => o.tipo === 'PUT') ?? [];
-                          return (
-                          <motion.tr
-                            initial={{ opacity: 0, height: 0 }}
-                            animate={{ opacity: 1, height: 'auto' }}
-                            exit={{ opacity: 0, height: 0 }}
-                            className="bg-[#FBFBFA]"
-                          >
-                            <td colSpan={9} className="px-6 py-8">
-                              {isLoading ? (
-                                <div className="flex items-center justify-center gap-2 py-8 text-[#141414]/40">
-                                  <RefreshCw className="w-4 h-4 animate-spin" />
-                                  <span className="text-xs">Carregando opções...</span>
-                                </div>
-                              ) : (
-                              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                                {/* CALLS */}
-                                <div className="space-y-4">
-                                  <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                      <TrendingUp className="w-4 h-4 text-emerald-500" />
-                                      <h4 className="text-[10px] font-bold uppercase tracking-widest text-emerald-600">Opções CALL (Compra)</h4>
-                                    </div>
-                                    <span className="text-[10px] font-mono text-[#141414]/40 uppercase">Venc: {calls[0]?.vencimento ? new Date(calls[0].vencimento).toLocaleDateString('pt-BR') : '-'}</span>
-                                  </div>
-                                  <div className="bg-white rounded-xl border border-[#141414]/5 overflow-hidden">
-                                    <table className="w-full text-left text-xs">
-                                      <thead className="bg-[#F5F5F4]/50 border-b border-[#141414]/5">
-                                        <tr>
-                                          <th className="px-4 py-2 font-bold text-[#141414]/40">Símbolo</th>
-                                          <th className="px-4 py-2 font-bold text-[#141414]/40">Strike</th>
-                                          <th className="px-4 py-2 font-bold text-[#141414]/40 text-right">Prêmio</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        {calls.map(opt => (
-                                          <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0">
-                                            <td className="px-4 py-2 font-mono font-bold">{opt.ticker}</td>
-                                            <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
-                                            <td className="px-4 py-2 font-mono text-right text-emerald-600 font-bold">R$ {opt.preco?.toFixed(2)}</td>
-                                          </tr>
-                                        ))}
-                                        {calls.length === 0 && (
-                                          <tr><td colSpan={3} className="px-4 py-4 text-center text-[#141414]/30">Nenhuma CALL disponível</td></tr>
-                                        )}
-                                      </tbody>
-                                    </table>
-                                  </div>
-                                </div>
-
-                                {/* PUTS */}
-                                <div className="space-y-4">
-                                  <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                      <TrendingDown className="w-4 h-4 text-rose-500" />
-                                      <h4 className="text-[10px] font-bold uppercase tracking-widest text-rose-600">Opções PUT (Venda)</h4>
-                                    </div>
-                                    <span className="text-[10px] font-mono text-[#141414]/40 uppercase">Venc: {puts[0]?.vencimento ? new Date(puts[0].vencimento).toLocaleDateString('pt-BR') : '-'}</span>
-                                  </div>
-                                  <div className="bg-white rounded-xl border border-[#141414]/5 overflow-hidden">
-                                    <table className="w-full text-left text-xs">
-                                      <thead className="bg-[#F5F5F4]/50 border-b border-[#141414]/5">
-                                        <tr>
-                                          <th className="px-4 py-2 font-bold text-[#141414]/40">Símbolo</th>
-                                          <th className="px-4 py-2 font-bold text-[#141414]/40">Strike</th>
-                                          <th className="px-4 py-2 font-bold text-[#141414]/40 text-right">Prêmio</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        {puts.map(opt => (
-                                          <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0">
-                                            <td className="px-4 py-2 font-mono font-bold">{opt.ticker}</td>
-                                            <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
-                                            <td className="px-4 py-2 font-mono text-right text-rose-600 font-bold">R$ {opt.preco?.toFixed(2)}</td>
-                                          </tr>
-                                        ))}
-                                        {puts.length === 0 && (
-                                          <tr><td colSpan={3} className="px-4 py-4 text-center text-[#141414]/30">Nenhuma PUT disponível</td></tr>
-                                        )}
-                                      </tbody>
-                                    </table>
-                                  </div>
-                                </div>
-                              </div>
-                              )}
-                            </td>
-                          </motion.tr>
-                          );
-                        })()}
+                        {expandedTickers.has(stock.ticker) && (
+                          <ExpandedOptionsRow
+                            key={`opts-${stock.ticker}`}
+                            ticker={stock.ticker}
+                            opts={optionsCache[stock.ticker]}
+                            isLoading={loadingOptions === stock.ticker || !optionsCache[stock.ticker]}
+                          />
+                        )}
                       </AnimatePresence>
                     </React.Fragment>
                   ))}
@@ -660,5 +594,181 @@ function TableHead({
         <ArrowUpDown className="w-3 h-3 opacity-50" />
       </div>
     </th>
+  );
+}
+
+function ExpandedOptionsRow({
+  ticker,
+  isLoading,
+  opts,
+}: {
+  key?: string;
+  ticker: string;
+  isLoading: boolean;
+  opts: OptionData[] | undefined;
+}) {
+  const vencimentos = useMemo(() => {
+    if (!opts) return [];
+    const v = new Set(opts.map((o) => o.vencimento));
+    return Array.from(v).filter(Boolean).sort();
+  }, [opts]);
+
+  const [selectedVenc, setSelectedVenc] = useState<string>('');
+
+  useEffect(() => {
+    if (!selectedVenc && vencimentos.length > 0) {
+      setSelectedVenc(vencimentos[0]);
+    } else if (selectedVenc && !vencimentos.includes(selectedVenc) && vencimentos.length > 0) {
+      setSelectedVenc(vencimentos[0]);
+    }
+  }, [vencimentos, selectedVenc]);
+
+  const filteredOpts = useMemo(() => {
+    if (!opts) return [];
+    if (!selectedVenc) return opts;
+    return opts.filter((o) => o.vencimento === selectedVenc);
+  }, [opts, selectedVenc]);
+
+  const calls = filteredOpts.filter((o) => o.tipo === 'CALL');
+  const puts = filteredOpts.filter((o) => o.tipo === 'PUT');
+
+  return (
+    <motion.tr
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: 'auto' }}
+      exit={{ opacity: 0, height: 0 }}
+      className="bg-[#FBFBFA]"
+    >
+      <td colSpan={9} className="px-6 py-8">
+        {isLoading ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-[#141414]/40">
+            <RefreshCw className="w-4 h-4 animate-spin" />
+            <span className="text-xs">Carregando opções para {ticker}...</span>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {vencimentos.length > 0 ? (
+              <div className="flex items-center gap-4">
+                <label className="text-[10px] uppercase font-bold text-[#141414]/40 tracking-widest">
+                  Data de Vencimento:
+                </label>
+                <div className="relative">
+                  <select
+                    className="appearance-none bg-white border border-[#141414]/10 rounded-lg pl-3 pr-8 py-1.5 text-sm font-bold text-[#141414] focus:outline-none focus:ring-2 focus:ring-[#141414]/20 cursor-pointer shadow-sm"
+                    value={selectedVenc}
+                    onChange={(e) => setSelectedVenc(e.target.value)}
+                  >
+                    {vencimentos.map((v) => (
+                      <option key={v} value={v}>
+                        {new Date(v + 'T12:00:00Z').toLocaleDateString('pt-BR')}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-[#141414]/40">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path>
+                    </svg>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              {/* CALLS */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4 text-emerald-500" />
+                    <h4 className="text-[10px] font-bold uppercase tracking-widest text-emerald-600">
+                      Opções CALL (Compra)
+                    </h4>
+                  </div>
+                  {selectedVenc && (
+                    <span className="text-[10px] font-mono text-[#141414]/40 uppercase">
+                      Venc: {new Date(selectedVenc + 'T12:00:00Z').toLocaleDateString('pt-BR')}
+                    </span>
+                  )}
+                </div>
+                <div className="bg-white rounded-xl border border-[#141414]/5 overflow-hidden">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-[#F5F5F4]/50 border-b border-[#141414]/5">
+                      <tr>
+                        <th className="px-4 py-2 font-bold text-[#141414]/40">Símbolo</th>
+                        <th className="px-4 py-2 font-bold text-[#141414]/40">Batida</th>
+                        <th className="px-4 py-2 font-bold text-[#141414]/40 text-right">Prêmio</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {calls.map((opt) => (
+                        <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0 hover:bg-[#F5F5F4]/50 transition-colors">
+                          <td className="px-4 py-2 font-mono font-bold">{opt.ticker}</td>
+                          <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
+                          <td className="px-4 py-2 font-mono text-right text-emerald-600 font-bold">
+                            R$ {opt.preco?.toFixed(2)}
+                          </td>
+                        </tr>
+                      ))}
+                      {calls.length === 0 && (
+                        <tr>
+                          <td colSpan={3} className="px-4 py-4 text-center text-[#141414]/30">
+                            Nenhuma CALL disponível
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* PUTS */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <TrendingDown className="w-4 h-4 text-rose-500" />
+                    <h4 className="text-[10px] font-bold uppercase tracking-widest text-rose-600">
+                      Opções PUT (Venda)
+                    </h4>
+                  </div>
+                  {selectedVenc && (
+                    <span className="text-[10px] font-mono text-[#141414]/40 uppercase">
+                      Venc: {new Date(selectedVenc + 'T12:00:00Z').toLocaleDateString('pt-BR')}
+                    </span>
+                  )}
+                </div>
+                <div className="bg-white rounded-xl border border-[#141414]/5 overflow-hidden">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-[#F5F5F4]/50 border-b border-[#141414]/5">
+                      <tr>
+                        <th className="px-4 py-2 font-bold text-[#141414]/40">Símbolo</th>
+                        <th className="px-4 py-2 font-bold text-[#141414]/40">Batida</th>
+                        <th className="px-4 py-2 font-bold text-[#141414]/40 text-right">Prêmio</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {puts.map((opt) => (
+                        <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0 hover:bg-[#F5F5F4]/50 transition-colors">
+                          <td className="px-4 py-2 font-mono font-bold">{opt.ticker}</td>
+                          <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
+                          <td className="px-4 py-2 font-mono text-right text-rose-600 font-bold">
+                            R$ {opt.preco?.toFixed(2)}
+                          </td>
+                        </tr>
+                      ))}
+                      {puts.length === 0 && (
+                        <tr>
+                          <td colSpan={3} className="px-4 py-4 text-center text-[#141414]/30">
+                            Nenhuma PUT disponível
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </td>
+    </motion.tr>
   );
 }
