@@ -208,7 +208,7 @@ def fetch_cotahist_python(max_preco: float = 15.0) -> dict | None:
 
         if rec["tpmerc"] == "010":
             # Ação à vista
-            if 0 < rec["preult"] <= max_preco:
+            if 0 < rec["preult"]:
                 acoes.append({
                     "ticker": rec["codneg"],
                     "preco": rec["preult"],
@@ -329,14 +329,18 @@ def get_ticker_list(cotahist: dict | None, max_preco: float) -> list[str]:
         if isinstance(acoes, list):
             for row in acoes:
                 t = row.get("ticker", "")
-                if t:
+                p = float(row.get("preco", 0.0))
+                if t and p > 0 and p <= max_preco:
                     tickers.add(t.strip().upper())
         elif isinstance(acoes, dict):
             # Formato colunar (R as.data.frame → jsonlite)
-            for t in acoes.get("ticker", []):
-                if t:
+            v_tickers = acoes.get("ticker", [])
+            v_precos = acoes.get("preco", [])
+            for i, t in enumerate(v_tickers):
+                p = float(v_precos[i]) if i < len(v_precos) else 0.0
+                if t and p > 0 and p <= max_preco:
                     tickers.add(str(t).strip().upper())
-        log.info("Tickers do COTAHIST: %d", len(tickers))
+        log.info("Tickers penny filtrados do COTAHIST: %d", len(tickers))
 
     # 2. Tickers do arquivo de saída existente (atualização incremental)
     if OUTPUT_JSON.exists():
@@ -445,35 +449,47 @@ def fetch_stock(ticker: str, max_preco: float) -> dict | None:
         try:
             options_dates = yf_ticker.options
             if options_dates:
-                next_expiry = options_dates[0]
-                chain = yf_ticker.option_chain(next_expiry)
-                
                 opcoes_yf = []
-                for _, row in chain.calls.iterrows():
-                    opcoes_yf.append({
-                        "ticker": row["contractSymbol"],
-                        "tipo": "CALL",
-                        "strike": _safe_round(row["strike"]),
-                        "preco": _safe_round(row["lastPrice"]),
-                        "vencimento": next_expiry
-                    })
-                for _, row in chain.puts.iterrows():
-                    opcoes_yf.append({
-                        "ticker": row["contractSymbol"],
-                        "tipo": "PUT",
-                        "strike": _safe_round(row["strike"]),
-                        "preco": _safe_round(row["lastPrice"]),
-                        "vencimento": next_expiry
-                    })
+                # Pega até 8 vencimentos futuros (aproximadamente 2 meses de opções semanais)
+                for exp_date in options_dates[:8]:
+                    try:
+                        chain = yf_ticker.option_chain(exp_date)
+                        for _, row in chain.calls.iterrows():
+                            opcoes_yf.append({
+                                "ticker": row["contractSymbol"],
+                                "tipo": "CALL",
+                                "strike": _safe_round(row["strike"]),
+                                "preco": _safe_round(row["lastPrice"]),
+                                "vencimento": exp_date
+                            })
+                        for _, row in chain.puts.iterrows():
+                            opcoes_yf.append({
+                                "ticker": row["contractSymbol"],
+                                "tipo": "PUT",
+                                "strike": _safe_round(row["strike"]),
+                                "preco": _safe_round(row["lastPrice"]),
+                                "vencimento": exp_date
+                            })
+                    except Exception as e:
+                        log.debug(f"Aviso: Não foi possível baixar dados para vencimento {exp_date}: {e}")
                 
-                # Limita a 10 opções (5 mais próximas do preço atual)
+                # Para evitar um arquivo gigante e irrelevante, mantemos o filtro de +/- 50% aqui 
+                # e deixamos todas as opções dentro desse range, em vez de limitar a apenas 5 de cada.
                 price_current = price
-                calls_sorted = sorted([o for o in opcoes_yf if o["tipo"] == "CALL"], 
-                                      key=lambda x: abs((x["strike"] or 0) - price_current))[:5]
-                puts_sorted = sorted([o for o in opcoes_yf if o["tipo"] == "PUT"], 
-                                     key=lambda x: abs((x["strike"] or 0) - price_current))[:5]
+                filtered_opciones = []
+                for exp_date in options_dates[:8]:
+                    opts_venc = [o for o in opcoes_yf if o["vencimento"] == exp_date]
+                    # Filtra opções muito "longe do dinheiro" (+/- 50% de tolerância)
+                    calls_valid = [o for o in opts_venc if o["tipo"] == "CALL" and o["strike"] and abs(o["strike"] - price_current) / price_current <= 0.50]
+                    puts_valid = [o for o in opts_venc if o["tipo"] == "PUT" and o["strike"] and abs(o["strike"] - price_current) / price_current <= 0.50]
+                    
+                    # Ordena do mais próximo do dinheiro para o mais distante, limitando a 20 de cada lado por vencimento (para não pesar tanto)
+                    calls_sorted = sorted(calls_valid, key=lambda x: abs((x["strike"] or 0) - price_current))[:20]
+                    puts_sorted = sorted(puts_valid, key=lambda x: abs((x["strike"] or 0) - price_current))[:20]
+                    
+                    filtered_opciones.extend(calls_sorted + puts_sorted)
                 
-                data["opcoes_yf"] = sorted(calls_sorted + puts_sorted, key=lambda x: x["strike"] or 0)
+                data["opcoes_yf"] = sorted(filtered_opciones, key=lambda x: (x["vencimento"], x["strike"] or 0))
         except Exception as opt_exc:
             log.debug("Erro ao buscar opções para %s: %s", ticker, opt_exc)
 
@@ -612,7 +628,7 @@ def enrich_with_options(stocks: list[dict], cotahist: dict | None) -> list[dict]
             "vencimento": venc,
         })
 
-    # Para cada ação, seleciona opções do próximo vencimento por tipo (CALL e PUT separados)
+    # Para cada ação, seleciona opções dos próximos 8 vencimentos por tipo (CALL e PUT separados)
     mapa_opcoes: dict[str, list] = {}
     for tik_obj, opts in mapa_todas.items():
         selected = []
@@ -621,8 +637,8 @@ def enrich_with_options(stocks: list[dict], cotahist: dict | None) -> list[dict]
             if not tipo_opts:
                 continue
             vencimentos = sorted(set(o["vencimento"] for o in tipo_opts))
-            proximo = vencimentos[0]
-            selected.extend(o for o in tipo_opts if o["vencimento"] == proximo)
+            for venc in vencimentos[:8]:
+                selected.extend(o for o in tipo_opts if o["vencimento"] == venc)
         if selected:
             mapa_opcoes[tik_obj] = selected
 
@@ -684,6 +700,8 @@ def parse_args():
                    help="Preço máximo para filtro (padrão: 10.0)")
     p.add_argument("--workers", type=int, default=8,
                    help="Threads paralelas para yfinance (padrão: 8)")
+    p.add_argument("--ticker", type=str, default=None,
+                   help="Ticker específico para atualizar (ex: OIBR3)")
     return p.parse_args()
 
 
@@ -695,17 +713,27 @@ def main():
     log.info("Filtro: preço ≤ R$ %.2f | workers: %d", args.max_preco, args.workers)
 
     # 1. Dados COTAHIST via R/rb3 (primário) ou Python (fallback)
-    cotahist = run_r_script()
-    if not cotahist:
-        log.info("Tentando fallback: COTAHIST via Python...")
-        cotahist = fetch_cotahist_python(max_preco=args.max_preco + 5)
+    cotahist = None
+    if args.ticker:
+        # Se for um ticker específico, carregamos o COTAHIST existente apenas para não baixar de novo
+        tickers = [args.ticker.upper()]
+        try:
+            with open(COTAHIST_JSON, encoding="utf-8") as f:
+                cotahist = json.load(f)
+        except Exception:
+            pass
+    else:
+        cotahist = run_r_script()
+        if not cotahist:
+            log.info("Tentando fallback: COTAHIST via Python...")
+            cotahist = fetch_cotahist_python(max_preco=args.max_preco + 5)
 
-    # 2. Lista de tickers
-    tickers = get_ticker_list(cotahist, args.max_preco)
-    log.info("Total de tickers a verificar: %d", len(tickers))
+        # 2. Lista de tickers
+        tickers = get_ticker_list(cotahist, args.max_preco)
+        log.info("Total de tickers a verificar: %d", len(tickers))
 
     # 3. Busca yfinance
-    stocks = fetch_all(tickers, args.max_preco, args.workers)
+    stocks = fetch_all(tickers, args.max_preco if not args.ticker else 99999.0, args.workers)
 
     if not stocks:
         log.error("Nenhuma ação encontrada. Verifique conectividade e parâmetros.")
@@ -718,8 +746,28 @@ def main():
     stocks = enrich_with_options(stocks, cotahist)
 
     # 5. Salva
-    save(stocks, cotahist)
-    log.info("=== Atualização concluída: %d ações ===", len(stocks))
+    if args.ticker and OUTPUT_JSON.exists():
+        try:
+            with open(OUTPUT_JSON, encoding="utf-8") as f:
+                existing_data = json.load(f)
+            existing_stocks = existing_data.get("acoes", [])
+            new_stocks = []
+            replaced = False
+            for s in existing_stocks:
+                if s["ticker"] == stocks[0]["ticker"]:
+                    new_stocks.append(stocks[0])
+                    replaced = True
+                else:
+                    new_stocks.append(s)
+            if not replaced:
+                new_stocks.append(stocks[0])
+            save(new_stocks, cotahist)
+        except Exception as e:
+            log.error("Erro ao mesclar ticker: %s", e)
+            save(stocks, cotahist)
+    else:
+        save(stocks, cotahist)
+    log.info("=== Atualização concluída ===")
 
 
 if __name__ == "__main__":
