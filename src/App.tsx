@@ -69,7 +69,7 @@ export default function App() {
 
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: keyof StockData; direction: 'asc' | 'desc' } | null>(
-    { key: 'varDia', direction: 'desc' }
+    { key: 'var1a', direction: 'desc' }
   );
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const [expandedTickers, setExpandedTickers] = useState<Set<string>>(new Set());
@@ -207,7 +207,7 @@ export default function App() {
         return 0;
       });
     }
-    return stocks.slice(0, 20);
+    return stocks.slice(0, 15);
   }, [allStocks, searchTerm, sortConfig]);
 
   // ---- estatísticas --------------------------------------------------------
@@ -477,6 +477,7 @@ export default function App() {
                   <TableHead label="Setor" sortKey="setor" onSort={handleSort} />
                   <TableHead label="Var. Dia" sortKey="varDia" onSort={handleSort} />
                   <TableHead label="Var. Semana" sortKey="varSemana" onSort={handleSort} />
+                  <TableHead label="Var. Ano" sortKey="var1a" onSort={handleSort} />
                   <TableHead label="P/L" sortKey="pl" onSort={handleSort} />
                   <TableHead label="P/VP" sortKey="pvp" onSort={handleSort} />
                   <TableHead label="Upside" sortKey="upsideGraham" onSort={handleSort} />
@@ -519,6 +520,9 @@ export default function App() {
                         </td>
                         <td className={cn("px-6 py-4 font-mono text-sm", varClass(stock.varSemana))}>
                           {fmtPct(stock.varSemana)}
+                        </td>
+                        <td className={cn("px-6 py-4 font-mono text-sm", varClass(stock.var1a))}>
+                          {fmtPct(stock.var1a)}
                         </td>
                         <td className="px-6 py-4 font-mono text-sm">{stock.pl?.toFixed(2) ?? '-'}</td>
                         <td className="px-6 py-4 font-mono text-sm">{stock.pvp?.toFixed(2) ?? '-'}</td>

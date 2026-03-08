@@ -398,6 +398,13 @@ def fetch_stock(ticker: str, max_preco: float) -> dict | None:
                 ((hist_week["Close"].iloc[-1] / hist_week["Close"].iloc[0]) - 1) * 100
             )
 
+        hist_1y = yf_ticker.history(period="1y", auto_adjust=True)
+        var1a = None
+        if len(hist_1y) >= 2:
+            var1a = _safe_round(
+                ((hist_1y["Close"].iloc[-1] / hist_1y["Close"].iloc[0]) - 1) * 100
+            )
+
         hist_5y = yf_ticker.history(period="5y", auto_adjust=True)
         var5a = None
         if len(hist_5y) >= 2:
@@ -436,6 +443,7 @@ def fetch_stock(ticker: str, max_preco: float) -> dict | None:
             "dy":               dy,
             "pl":               pl,
             "pvp":              pvp,
+            "var1a":            var1a,
             "var5a":            var5a,
             "upsideGraham":     upside,
             "varDia":           var_dia,
