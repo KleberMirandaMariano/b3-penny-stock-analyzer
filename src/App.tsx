@@ -99,8 +99,14 @@ export default function App() {
   const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
+    // Avisa após 5s que o servidor pode estar iniciando (cold start Render)
+    const wakeupTimer = setTimeout(() => {
+      setError('Servidor iniciando, aguarde...');
+    }, 5000);
     try {
       const res = await getStocks();
+      clearTimeout(wakeupTimer);
+      setError(null);
       setResponse(res);
       
       const newCache: Record<string, OptionData[]> = {};
@@ -115,6 +121,7 @@ export default function App() {
         setSelectedTicker(res.stocks[0].ticker);
       }
     } catch (err: any) {
+      clearTimeout(wakeupTimer);
       setError(err?.message ?? 'Erro desconhecido ao carregar dados.');
     } finally {
       setLoading(false);
