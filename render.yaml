@@ -2,7 +2,7 @@ services:
   - type: web
     name: b3-penny-stock-analyzer-api
     runtime: node
-    buildCommand: npm install && pip install -r requirements.txt
+    buildCommand: npm install --include=dev && pip3 install -r requirements.txt
     startCommand: npm run server
     envVars:
       - key: NODE_ENV

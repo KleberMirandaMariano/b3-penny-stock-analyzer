@@ -68,6 +68,8 @@ function readStocks(): object | null {
 
 let updateInProgress = false;
 
+const PYTHON = process.platform === 'win32' ? 'python' : 'python3';
+
 function runUpdateScript(
   extraArgs: string[] = [],
   callback: (err: ExecException | null, stdout: string, stderr: string) => void
@@ -75,7 +77,7 @@ function runUpdateScript(
   const scriptPath = path.join(ROOT_DIR, 'scripts', 'update_stocks.py');
   const args = extraArgs.join(' ');
   exec(
-    `python "${scriptPath}" ${args}`.trim(),
+    `${PYTHON} "${scriptPath}" ${args}`.trim(),
     { cwd: ROOT_DIR, timeout: 10 * 60 * 1000 }, // 10 min máx
     callback
   );
