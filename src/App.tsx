@@ -133,8 +133,9 @@ export default function App() {
     setUpdateMsg(targetTicker ? `Pesquisando ${targetTicker}...` : 'Solicitando pesquisa geral...');
     const { ok, mensagem } = await triggerUpdate(targetTicker);
     setUpdateMsg(ok ? '✓ Pesquisa concluída — recarregando em breve' : `Erro: ${mensagem}`);
-    
+
     if (ok) {
+      const delay = targetTicker ? 25000 : 5000;
       setTimeout(async () => {
         await loadData();
         if (targetTicker) {
@@ -145,7 +146,7 @@ export default function App() {
         }
         setRefreshing(false);
         setUpdateMsg(null);
-      }, 5000);
+      }, delay);
     } else {
       setRefreshing(false);
       setTimeout(() => setUpdateMsg(null), 4000);
