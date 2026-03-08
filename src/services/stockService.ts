@@ -117,6 +117,20 @@ export async function getOptions(ticker: string): Promise<OptionData[]> {
 }
 
 // ---------------------------------------------------------------------------
+// Consulta o status da atualização em andamento
+// ---------------------------------------------------------------------------
+export async function getUpdateStatus(): Promise<{ updateInProgress: boolean }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/status`, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return { updateInProgress: false };
+    const data = await res.json();
+    return { updateInProgress: data.updateInProgress ?? false };
+  } catch {
+    return { updateInProgress: false };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Dispara atualização na API (não-bloqueante)
 // ---------------------------------------------------------------------------
 export async function triggerUpdate(ticker?: string): Promise<{ ok: boolean; mensagem?: string }> {
