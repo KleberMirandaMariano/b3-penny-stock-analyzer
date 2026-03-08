@@ -21,6 +21,7 @@ export interface StockData {
   dy: number | null;
   pl: number | null;
   pvp: number | null;
+  var1a: number | null;
   var5a: number | null;
   upsideGraham: number | null;
   varDia: number | null;
