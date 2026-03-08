@@ -30,15 +30,26 @@ const app = express();
 const PORT = Number(process.env.PORT ?? 3001);
 
 // ---------------------------------------------------------------------------
+// CORS — origens permitidas
+// ---------------------------------------------------------------------------
+const allowedOrigins = [
+  'http://localhost:3000',
+  process.env.ALLOWED_ORIGIN ?? '',
+].filter(Boolean);
+
+// ---------------------------------------------------------------------------
 // Middlewares
 // ---------------------------------------------------------------------------
 app.use(express.json());
 
-// CORS amplo (ajuste origens conforme necessário em produção)
 app.use((req: Request, res: Response, next: NextFunction) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin ?? '';
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Vary', 'Origin');
   if (req.method === 'OPTIONS') { res.sendStatus(204); return; }
   next();
 });
