@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { getStocks, getOptions, triggerUpdate, type StocksResponse } from './services/stockService';
+import { getStocks, getOptions, triggerUpdate, getUpdateStatus, type StocksResponse } from './services/stockService';
 import { cn, type StockData, type OptionData } from './utils';
 import {
   TrendingUp,
@@ -132,21 +132,32 @@ export default function App() {
     setRefreshing(true);
     setUpdateMsg(targetTicker ? `Pesquisando ${targetTicker}...` : 'Solicitando pesquisa geral...');
     const { ok, mensagem } = await triggerUpdate(targetTicker);
-    setUpdateMsg(ok ? '✓ Pesquisa concluída — recarregando em breve' : `Erro: ${mensagem}`);
+    setUpdateMsg(ok ? '✓ Atualização iniciada — aguardando conclusão...' : `Erro: ${mensagem}`);
 
     if (ok) {
-      const delay = targetTicker ? 25000 : 5000;
-      setTimeout(async () => {
-        await loadData();
-        if (targetTicker) {
-          setSelectedTicker(targetTicker);
-          if (!expandedTickers.has(targetTicker)) {
-            setExpandedTickers(prev => new Set(prev).add(targetTicker));
+      // Poll /api/status a cada 3s até updateInProgress=false (máx 90s)
+      const maxWait = 90_000;
+      const interval = 3_000;
+      const start = Date.now();
+
+      const poll = async () => {
+        const { updateInProgress } = await getUpdateStatus();
+        if (!updateInProgress || Date.now() - start >= maxWait) {
+          await loadData();
+          if (targetTicker) {
+            setSelectedTicker(targetTicker);
+            if (!expandedTickers.has(targetTicker)) {
+              setExpandedTickers(prev => new Set(prev).add(targetTicker));
+            }
           }
+          setRefreshing(false);
+          setUpdateMsg(null);
+        } else {
+          setTimeout(poll, interval);
         }
-        setRefreshing(false);
-        setUpdateMsg(null);
-      }, delay);
+      };
+
+      setTimeout(poll, interval);
     } else {
       setRefreshing(false);
       setTimeout(() => setUpdateMsg(null), 4000);
