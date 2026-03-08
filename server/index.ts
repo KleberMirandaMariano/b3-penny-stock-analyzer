@@ -238,4 +238,15 @@ app.listen(PORT, () => {
   console.log(`   POST http://localhost:${PORT}/api/update`);
   console.log(`   GET  http://localhost:${PORT}/api/status`);
   console.log(`   Auto-update: a cada 30 min (horário de pregão)\n`);
+
+  // Se não há dados (ex: reinício do servidor no Render), dispara update automático
+  if (!existsSync(STOCKS_FILE)) {
+    console.log('[startup] stocks.json ausente — iniciando atualização automática...');
+    updateInProgress = true;
+    runUpdateScript([], (err, _stdout, stderr) => {
+      updateInProgress = false;
+      if (err) console.error('[startup] Falha:', stderr || err.message);
+      else console.log('[startup] Dados gerados com sucesso.');
+    });
+  }
 });
