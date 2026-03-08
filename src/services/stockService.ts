@@ -2,6 +2,8 @@ import Papa from 'papaparse';
 import { RAW_STOCK_DATA, MOCK_OPTIONS_DATA } from '../data';
 import { StockData, OptionData, parseCurrency, parsePercentage, parseNumber } from '../utils';
 
+const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
+
 export interface StocksResponse {
   stocks: StockData[];
   lastUpdate: string;
@@ -74,7 +76,7 @@ function parseApiResponse(data: any): StocksResponse {
 // ---------------------------------------------------------------------------
 export async function getStocks(): Promise<StocksResponse> {
   try {
-    const res = await fetch('/api/stocks', { signal: AbortSignal.timeout(8000) });
+    const res = await fetch(`${API_BASE}/api/stocks`, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const parsed = parseApiResponse(data);
@@ -99,7 +101,7 @@ export async function getStocks(): Promise<StocksResponse> {
 // ---------------------------------------------------------------------------
 export async function getOptions(ticker: string): Promise<OptionData[]> {
   try {
-    const res = await fetch(`/api/options/${ticker}`, { signal: AbortSignal.timeout(8000) });
+    const res = await fetch(`${API_BASE}/api/options/${ticker}`, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return [];
     const data = await res.json();
     return (data.opcoes ?? []).map((o: any) => ({
@@ -119,7 +121,7 @@ export async function getOptions(ticker: string): Promise<OptionData[]> {
 // ---------------------------------------------------------------------------
 export async function triggerUpdate(ticker?: string): Promise<{ ok: boolean; mensagem?: string }> {
   try {
-    const res = await fetch('/api/update', {
+    const res = await fetch(`${API_BASE}/api/update`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ maxPreco: 10.0, ticker }),
