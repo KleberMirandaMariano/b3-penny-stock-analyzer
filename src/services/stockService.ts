@@ -3,14 +3,6 @@ import { RAW_STOCK_DATA, MOCK_OPTIONS_DATA } from '../data';
 import { StockData, OptionData, parseCurrency, parsePercentage, parseNumber } from '../utils';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
-const BRAPI_TOKEN = import.meta.env.VITE_BRAPI_TOKEN ?? '';
-
-// Primeiros 15 tickers da lista base (mesma base do COTAHIST/scripts)
-const BASE_TICKERS_15 = [
-  'AZUL4', 'RAIZ4', 'QUAL3', 'CVCB3', 'LJQQ3',
-  'HBOR3', 'COGN3', 'BHIA3', 'CBAV3', 'PGMN3',
-  'PCAR3', 'MELK3', 'MTRE3', 'MNPR3', 'LIGT3',
-];
 
 export interface StocksResponse {
   stocks: StockData[];
@@ -77,71 +69,6 @@ function parseApiResponse(data: any): StocksResponse {
     lastUpdate: data.atualizadoEm ?? '',
     dataReferencia: data.dataReferencia ?? '',
     fonte: data.fonte ?? 'yfinance',
-    isLive: true,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Brapi.dev – mesmos parâmetros da planilha Google Sheets
-// Métricas: longName/shortName (empresa), regularMarketPrice (preco),
-//           regularMarketChangePercent (varDia)
-// ---------------------------------------------------------------------------
-export async function getBrapiStocks(tickers: string[] = BASE_TICKERS_15): Promise<StocksResponse> {
-  const tickersString = tickers.join(',');
-  // Mesma URL da planilha: range=1d&fundamental=true&token=...
-  const apiUrl = `https://brapi.dev/api/quote/${tickersString}?range=1d&fundamental=true&token=${BRAPI_TOKEN}`;
-
-  const res = await fetch(apiUrl, { signal: AbortSignal.timeout(15_000) });
-  if (!res.ok) throw new Error(`Brapi.dev HTTP ${res.status}`);
-  const data = await res.json();
-  const results: any[] = data.results ?? [];
-
-  const stocks: StockData[] = tickers.map((ticker) => {
-    const stock = results.find((s: any) => s.symbol === ticker);
-    if (!stock) {
-      return {
-        ticker,
-        empresa: 'Não encontrado',
-        preco: 0,
-        setor: 'N/A',
-        dy: null,
-        pl: null,
-        pvp: null,
-        var1a: null,
-        var5a: null,
-        upsideGraham: null,
-        varDia: null,
-        varSemana: null,
-        volume: null,
-        ultimaAtualizacao: '',
-        opcoes: [],
-      };
-    }
-    return {
-      ticker,
-      empresa: stock.longName ?? stock.shortName ?? ticker,
-      preco: stock.regularMarketPrice ?? 0,
-      setor: 'N/A',
-      dy: null,
-      pl: null,
-      pvp: null,
-      var1a: null,
-      var5a: null,
-      upsideGraham: null,
-      varDia: stock.regularMarketChangePercent ?? null,
-      varSemana: null,
-      volume: null,
-      ultimaAtualizacao: new Date().toLocaleString('pt-BR'),
-      opcoes: [],
-    };
-  });
-
-  const now = new Date().toLocaleString('pt-BR');
-  return {
-    stocks,
-    lastUpdate: now,
-    dataReferencia: now,
-    fonte: 'Brapi.dev',
     isLive: true,
   };
 }

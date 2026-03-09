@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { getBrapiStocks, getOptions, triggerUpdate, getUpdateStatus, type StocksResponse } from './services/stockService';
+import { getStocks, getOptions, triggerUpdate, getUpdateStatus, type StocksResponse } from './services/stockService';
 import { cn, type StockData, type OptionData } from './utils';
 import {
   TrendingUp,
@@ -104,7 +104,7 @@ export default function App() {
       setError('Servidor iniciando, aguarde...');
     }, 5000);
     try {
-      const res = await getBrapiStocks();
+      const res = await getStocks();
       clearTimeout(wakeupTimer);
       setError(null);
       setResponse(res);
@@ -473,8 +473,14 @@ export default function App() {
                 <tr className="bg-[#F5F5F4]/50 border-b border-[#141414]/5">
                   <TableHead label="Ticker" sortKey="ticker" onSort={handleSort} />
                   <TableHead label="Empresa" sortKey="empresa" onSort={handleSort} />
-                  <TableHead label="Preço Atual (R$)" sortKey="preco" onSort={handleSort} />
-                  <TableHead label="Var. Dia (%)" sortKey="varDia" onSort={handleSort} />
+                  <TableHead label="Preço" sortKey="preco" onSort={handleSort} />
+                  <TableHead label="Setor" sortKey="setor" onSort={handleSort} />
+                  <TableHead label="Var. Dia" sortKey="varDia" onSort={handleSort} />
+                  <TableHead label="Var. Semana" sortKey="varSemana" onSort={handleSort} />
+                  <TableHead label="Var. Ano" sortKey="var1a" onSort={handleSort} />
+                  <TableHead label="P/L" sortKey="pl" onSort={handleSort} />
+                  <TableHead label="P/VP" sortKey="pvp" onSort={handleSort} />
+                  <TableHead label="Upside" sortKey="upsideGraham" onSort={handleSort} />
                 </tr>
               </thead>
               <tbody>
@@ -508,8 +514,20 @@ export default function App() {
                         </td>
                         <td className="px-6 py-4 text-sm text-[#141414]/70 truncate max-w-[200px]">{stock.empresa}</td>
                         <td className="px-6 py-4 font-mono text-sm">R$ {stock.preco.toFixed(2)}</td>
+                        <td className="px-6 py-4 text-xs uppercase tracking-wider text-[#141414]/50">{stock.setor}</td>
                         <td className={cn("px-6 py-4 font-mono text-sm", varClass(stock.varDia))}>
                           {fmtPct(stock.varDia)}
+                        </td>
+                        <td className={cn("px-6 py-4 font-mono text-sm", varClass(stock.varSemana))}>
+                          {fmtPct(stock.varSemana)}
+                        </td>
+                        <td className={cn("px-6 py-4 font-mono text-sm", varClass(stock.var1a))}>
+                          {fmtPct(stock.var1a)}
+                        </td>
+                        <td className="px-6 py-4 font-mono text-sm">{stock.pl?.toFixed(2) ?? '-'}</td>
+                        <td className="px-6 py-4 font-mono text-sm">{stock.pvp?.toFixed(2) ?? '-'}</td>
+                        <td className={cn("px-6 py-4 font-mono text-sm", varClass(stock.upsideGraham))}>
+                          {fmtPct(stock.upsideGraham)}
                         </td>
                       </motion.tr>
 
@@ -644,7 +662,7 @@ function ExpandedOptionsRow({
       exit={{ opacity: 0, height: 0 }}
       className="bg-[#FBFBFA]"
     >
-      <td colSpan={4} className="px-6 py-8">
+      <td colSpan={9} className="px-6 py-8">
         {isLoading ? (
           <div className="flex items-center justify-center gap-2 py-8 text-[#141414]/40">
             <RefreshCw className="w-4 h-4 animate-spin" />
