@@ -573,11 +573,10 @@ function StocksTable({
           </tr>
         </thead>
         <tbody>
-          <AnimatePresence mode="popLayout">
+          <AnimatePresence>
             {stocks.map((stock) => (
               <React.Fragment key={stock.ticker}>
                 <motion.tr
-                  layout
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
