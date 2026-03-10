@@ -573,13 +573,9 @@ function StocksTable({
           </tr>
         </thead>
         <tbody>
-          <AnimatePresence>
             {stocks.map((stock) => (
               <React.Fragment key={stock.ticker}>
-                <motion.tr
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
+                <tr
                   onClick={() => onRowClick(stock.ticker)}
                   className={cn(
                     "border-b border-[#141414]/5 hover:bg-[#F5F5F4]/30 transition-colors cursor-pointer",
@@ -588,12 +584,14 @@ function StocksTable({
                 >
                   <td className="px-6 py-4 font-mono font-bold text-sm">
                     <div className="flex items-center gap-2">
-                      <motion.span
-                        animate={{ rotate: expandedTickers.has(stock.ticker) ? 180 : 0 }}
-                        className="text-[#141414]/20"
+                      <span
+                        className={cn(
+                          "text-[#141414]/20 transition-transform duration-200 inline-block",
+                          expandedTickers.has(stock.ticker) && "rotate-180"
+                        )}
                       >
                         ▾
-                      </motion.span>
+                      </span>
                       {stock.ticker}
                     </div>
                   </td>
@@ -614,21 +612,18 @@ function StocksTable({
                   <td className={cn("px-6 py-4 font-mono text-sm", varClass(stock.upsideGraham))}>
                     {fmtPct(stock.upsideGraham)}
                   </td>
-                </motion.tr>
+                </tr>
 
-                <AnimatePresence>
-                  {expandedTickers.has(stock.ticker) && (
-                    <ExpandedOptionsRow
-                      key={`opts-${stock.ticker}`}
-                      ticker={stock.ticker}
-                      opts={optionsCache[stock.ticker]}
-                      isLoading={loadingOptions === stock.ticker || !optionsCache[stock.ticker]}
-                    />
-                  )}
-                </AnimatePresence>
+                {expandedTickers.has(stock.ticker) && (
+                  <ExpandedOptionsRow
+                    key={`opts-${stock.ticker}`}
+                    ticker={stock.ticker}
+                    opts={optionsCache[stock.ticker]}
+                    isLoading={loadingOptions === stock.ticker || !optionsCache[stock.ticker]}
+                  />
+                )}
               </React.Fragment>
             ))}
-          </AnimatePresence>
         </tbody>
       </table>
     </div>
@@ -719,12 +714,7 @@ function ExpandedOptionsRow({
   const puts = filteredOpts.filter((o) => o.tipo === 'PUT');
 
   return (
-    <motion.tr
-      initial={{ opacity: 0, height: 0 }}
-      animate={{ opacity: 1, height: 'auto' }}
-      exit={{ opacity: 0, height: 0 }}
-      className="bg-[#FBFBFA]"
-    >
+    <tr className="bg-[#FBFBFA]">
       <td colSpan={9} className="px-6 py-8">
         {isLoading ? (
           <div className="flex items-center justify-center gap-2 py-8 text-[#141414]/40">
@@ -855,6 +845,6 @@ function ExpandedOptionsRow({
           </div>
         )}
       </td>
-    </motion.tr>
+    </tr>
   );
 }
