@@ -753,6 +753,22 @@ def main():
     # 3. Busca yfinance
     stocks = fetch_all(tickers, args.max_preco if not args.ticker else 99999.0, args.workers, base_tickers_set)
 
+    # 3.1 Retry sequencial para base_tickers ausentes (rate limiting / falhas pontuais)
+    if not args.ticker and base_tickers_set:
+        import time
+        fetched_tickers = {s["ticker"] for s in stocks}
+        missing_base = base_tickers_set - fetched_tickers
+        if missing_base:
+            log.info("Retentando %d base_tickers ausentes: %s", len(missing_base), sorted(missing_base))
+            for t in sorted(missing_base):
+                time.sleep(1.5)  # Pausa para evitar rate limiting
+                result = fetch_stock(t, 99999.0)
+                if result:
+                    stocks.append(result)
+                    log.info("Retry OK: %s  R$ %.2f", t, result["preco"])
+                else:
+                    log.warning("Retry falhou: %s", t)
+
     if not stocks:
         log.error("Nenhuma ação encontrada. Verifique conectividade e parâmetros.")
         sys.exit(1)
