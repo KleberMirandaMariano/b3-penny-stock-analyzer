@@ -494,15 +494,88 @@ export default function App() {
             </div>
             <Activity className="w-4 h-4 text-[#141414]/40" />
           </div>
-          <StocksTable
-            stocks={filteredStocks}
-            selectedTicker={selectedTicker}
-            expandedTickers={expandedTickers}
-            optionsCache={optionsCache}
-            loadingOptions={loadingOptions}
-            onSort={handleSort}
-            onRowClick={(ticker) => { setSelectedTicker(ticker); toggleExpand(ticker); }}
-          />
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-[#F5F5F4]/50 border-b border-[#141414]/5">
+                  <TableHead label="Ticker" sortKey="ticker" onSort={handleSort} />
+                  <TableHead label="Empresa" sortKey="empresa" onSort={handleSort} />
+                  <TableHead label="Preço" sortKey="preco" onSort={handleSort} />
+                  <TableHead label="Setor" sortKey="setor" onSort={handleSort} />
+                  <TableHead label="Var. Dia" sortKey="varDia" onSort={handleSort} />
+                  <TableHead label="Var. Semana" sortKey="varSemana" onSort={handleSort} />
+                  <TableHead label="Var. Ano" sortKey="var1a" onSort={handleSort} />
+                  <TableHead label="P/L" sortKey="pl" onSort={handleSort} />
+                  <TableHead label="P/VP" sortKey="pvp" onSort={handleSort} />
+                  <TableHead label="Upside" sortKey="upsideGraham" onSort={handleSort} />
+                </tr>
+              </thead>
+              <tbody>
+                <AnimatePresence mode="popLayout">
+                  {filteredStocks.map((stock) => (
+                    <React.Fragment key={stock.ticker}>
+                      <motion.tr
+                        layout
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        onClick={() => {
+                          setSelectedTicker(stock.ticker);
+                          toggleExpand(stock.ticker);
+                        }}
+                        className={cn(
+                          "border-b border-[#141414]/5 hover:bg-[#F5F5F4]/30 transition-colors cursor-pointer",
+                          selectedTicker === stock.ticker && "bg-blue-50/20"
+                        )}
+                      >
+                        <td className="px-6 py-4 font-mono font-bold text-sm">
+                          <div className="flex items-center gap-2">
+                            <motion.span
+                              animate={{ rotate: expandedTickers.has(stock.ticker) ? 180 : 0 }}
+                              className="text-[#141414]/20"
+                            >
+                              ▾
+                            </motion.span>
+                            {stock.ticker}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-[#141414]/70 truncate max-w-[200px]">{stock.empresa}</td>
+                        <td className="px-6 py-4 font-mono text-sm">R$ {stock.preco.toFixed(2)}</td>
+                        <td className="px-6 py-4 text-xs uppercase tracking-wider text-[#141414]/50">{stock.setor}</td>
+                        <td className={cn("px-6 py-4 font-mono text-sm", varClass(stock.varDia))}>
+                          {fmtPct(stock.varDia)}
+                        </td>
+                        <td className={cn("px-6 py-4 font-mono text-sm", varClass(stock.varSemana))}>
+                          {fmtPct(stock.varSemana)}
+                        </td>
+                        <td className={cn("px-6 py-4 font-mono text-sm", varClass(stock.var1a))}>
+                          {fmtPct(stock.var1a)}
+                        </td>
+                        <td className="px-6 py-4 font-mono text-sm">{stock.pl?.toFixed(2) ?? '-'}</td>
+                        <td className="px-6 py-4 font-mono text-sm">{stock.pvp?.toFixed(2) ?? '-'}</td>
+                        <td className={cn("px-6 py-4 font-mono text-sm", varClass(stock.upsideGraham))}>
+                          {fmtPct(stock.upsideGraham)}
+                        </td>
+                      </motion.tr>
+
+                      {/* Visão Detalhada de Opções (lazy-loaded) */}
+                      <AnimatePresence>
+                        {expandedTickers.has(stock.ticker) && (
+                          <ExpandedOptionsRow
+                            key={`opts-${stock.ticker}`}
+                            ticker={stock.ticker}
+                            currentPrice={stock.preco}
+                            opts={optionsCache[stock.ticker]}
+                            isLoading={loadingOptions === stock.ticker || !optionsCache[stock.ticker]}
+                          />
+                        )}
+                      </AnimatePresence>
+                    </React.Fragment>
+                  ))}
+                </AnimatePresence>
+              </tbody>
+            </table>
+          </div>
         </div>
           </>
         )}
@@ -678,15 +751,38 @@ function TableHead({
   );
 }
 
+function getMoneyness(strike: number | null, currentPrice: number, tipo: 'CALL' | 'PUT'): 'ITM' | 'ATM' | 'OTM' {
+  if (strike === null) return 'OTM';
+  const diff = Math.abs(strike - currentPrice) / currentPrice;
+  if (diff <= 0.02) return 'ATM';
+  if (tipo === 'CALL') return strike < currentPrice ? 'ITM' : 'OTM';
+  return strike > currentPrice ? 'ITM' : 'OTM';
+}
+
+function MoneynessBadge({ moneyness }: { moneyness: 'ITM' | 'ATM' | 'OTM' }) {
+  const styles = {
+    ITM: 'bg-emerald-100 text-emerald-700',
+    ATM: 'bg-amber-100 text-amber-700',
+    OTM: 'bg-[#141414]/5 text-[#141414]/40',
+  };
+  return (
+    <span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${styles[moneyness]}`}>
+      {moneyness}
+    </span>
+  );
+}
+
 function ExpandedOptionsRow({
   ticker,
   isLoading,
   opts,
+  currentPrice,
 }: {
   key?: string;
   ticker: string;
   isLoading: boolean;
   opts: OptionData[] | undefined;
+  currentPrice: number;
 }) {
   const vencimentos = useMemo(() => {
     if (!opts) return [];
@@ -775,15 +871,23 @@ function ExpandedOptionsRow({
                       </tr>
                     </thead>
                     <tbody>
-                      {calls.map((opt) => (
-                        <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0 hover:bg-[#F5F5F4]/50 transition-colors">
-                          <td className="px-4 py-2 font-mono font-bold">{opt.ticker}</td>
-                          <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
-                          <td className="px-4 py-2 font-mono text-right text-emerald-600 font-bold">
-                            R$ {opt.preco?.toFixed(2)}
-                          </td>
-                        </tr>
-                      ))}
+                      {calls.map((opt) => {
+                        const moneyness = getMoneyness(opt.strike, currentPrice, 'CALL');
+                        return (
+                          <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0 hover:bg-[#F5F5F4]/50 transition-colors">
+                            <td className="px-4 py-2 font-mono font-bold">
+                              <div className="flex items-center gap-2">
+                                {opt.ticker}
+                                <MoneynessBadge moneyness={moneyness} />
+                              </div>
+                            </td>
+                            <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
+                            <td className="px-4 py-2 font-mono text-right text-emerald-600 font-bold">
+                              R$ {opt.preco?.toFixed(2)}
+                            </td>
+                          </tr>
+                        );
+                      })}
                       {calls.length === 0 && (
                         <tr>
                           <td colSpan={3} className="px-4 py-4 text-center text-[#141414]/30">
@@ -821,15 +925,23 @@ function ExpandedOptionsRow({
                       </tr>
                     </thead>
                     <tbody>
-                      {puts.map((opt) => (
-                        <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0 hover:bg-[#F5F5F4]/50 transition-colors">
-                          <td className="px-4 py-2 font-mono font-bold">{opt.ticker}</td>
-                          <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
-                          <td className="px-4 py-2 font-mono text-right text-rose-600 font-bold">
-                            R$ {opt.preco?.toFixed(2)}
-                          </td>
-                        </tr>
-                      ))}
+                      {puts.map((opt) => {
+                        const moneyness = getMoneyness(opt.strike, currentPrice, 'PUT');
+                        return (
+                          <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0 hover:bg-[#F5F5F4]/50 transition-colors">
+                            <td className="px-4 py-2 font-mono font-bold">
+                              <div className="flex items-center gap-2">
+                                {opt.ticker}
+                                <MoneynessBadge moneyness={moneyness} />
+                              </div>
+                            </td>
+                            <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
+                            <td className="px-4 py-2 font-mono text-right text-rose-600 font-bold">
+                              R$ {opt.preco?.toFixed(2)}
+                            </td>
+                          </tr>
+                        );
+                      })}
                       {puts.length === 0 && (
                         <tr>
                           <td colSpan={3} className="px-4 py-4 text-center text-[#141414]/30">
