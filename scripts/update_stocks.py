@@ -507,7 +507,7 @@ def fetch_stock(ticker: str, max_preco: float) -> dict | None:
         return None
 
 
-def fetch_all(tickers: list[str], max_preco: float, workers: int) -> list[dict]:
+def fetch_all(tickers: list[str], max_preco: float, workers: int, no_limit_tickers: set | None = None) -> list[dict]:
     """Busca dados de todos os tickers em paralelo."""
     results: list[dict] = []
     total = len(tickers)
@@ -516,7 +516,10 @@ def fetch_all(tickers: list[str], max_preco: float, workers: int) -> list[dict]:
     log.info("Buscando dados de %d tickers (workers=%d)...", total, workers)
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(fetch_stock, t, max_preco): t for t in tickers}
+        futures = {
+            pool.submit(fetch_stock, t, 99999.0 if (no_limit_tickers and t in no_limit_tickers) else max_preco): t
+            for t in tickers
+        }
         for fut in as_completed(futures):
             done += 1
             ticker = futures[fut]
@@ -740,8 +743,31 @@ def main():
         tickers = get_ticker_list(cotahist, args.max_preco)
         log.info("Total de tickers a verificar: %d", len(tickers))
 
+    # Carrega base_tickers para bypass do filtro de preco
+    base_tickers_set: set[str] = set()
+    if BASE_TICKERS.exists():
+        with open(BASE_TICKERS, encoding="utf-8") as f:
+            _base = json.load(f)
+        base_tickers_set = {t.strip().upper() for t in _base.get("tickers", [])}
+
     # 3. Busca yfinance
-    stocks = fetch_all(tickers, args.max_preco if not args.ticker else 99999.0, args.workers)
+    stocks = fetch_all(tickers, args.max_preco if not args.ticker else 99999.0, args.workers, base_tickers_set)
+
+    # 3.1 Retry sequencial para base_tickers ausentes (rate limiting / falhas pontuais)
+    if not args.ticker and base_tickers_set:
+        import time
+        fetched_tickers = {s["ticker"] for s in stocks}
+        missing_base = base_tickers_set - fetched_tickers
+        if missing_base:
+            log.info("Retentando %d base_tickers ausentes: %s", len(missing_base), sorted(missing_base))
+            for t in sorted(missing_base):
+                time.sleep(1.5)  # Pausa para evitar rate limiting
+                result = fetch_stock(t, 99999.0)
+                if result:
+                    stocks.append(result)
+                    log.info("Retry OK: %s  R$ %.2f", t, result["preco"])
+                else:
+                    log.warning("Retry falhou: %s", t)
 
     if not stocks:
         log.error("Nenhuma ação encontrada. Verifique conectividade e parâmetros.")
