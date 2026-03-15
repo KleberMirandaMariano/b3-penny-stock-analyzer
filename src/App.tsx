@@ -867,7 +867,7 @@ function ExpandedOptionsRow({
                     <thead className="bg-[#F5F5F4]/50 border-b border-[#141414]/5">
                       <tr>
                         <th className="px-4 py-2 font-bold text-[#141414]/40 w-1/2">Símbolo</th>
-                        <th className="px-4 py-2 font-bold text-[#141414]/40">Batida</th>
+                        <th className="px-4 py-2 font-bold text-[#141414]/40">Strike</th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right">Prêmio</th>
                       </tr>
                     </thead>
@@ -921,7 +921,7 @@ function ExpandedOptionsRow({
                     <thead className="bg-[#F5F5F4]/50 border-b border-[#141414]/5">
                       <tr>
                         <th className="px-4 py-2 font-bold text-[#141414]/40 w-1/2">Símbolo</th>
-                        <th className="px-4 py-2 font-bold text-[#141414]/40">Batida</th>
+                        <th className="px-4 py-2 font-bold text-[#141414]/40">Strike</th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right">Prêmio</th>
                       </tr>
                     </thead>
