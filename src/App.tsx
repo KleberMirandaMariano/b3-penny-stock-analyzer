@@ -15,6 +15,8 @@ import {
   Wifi,
   WifiOff,
   AlertTriangle,
+  ChevronLeft,
+  X,
 } from 'lucide-react';
 import {
   BarChart,
@@ -27,35 +29,17 @@ import {
   PieChart,
   Pie,
   Cell,
-  Legend,
-  Line,
-  Area,
-  ComposedChart,
+  Legend
 } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 
 const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'];
 
-// ---------------------------------------------------------------------------
-// Dados históricos sintéticos para o gráfico de médias móveis
-// ---------------------------------------------------------------------------
-function generateHistory(currentPrice: number, var5y: number | null) {
-  const points = 200;
-  const history: { day: number; price: number }[] = [];
-  const startPrice = currentPrice / (1 + (var5y || 0) / 100);
-  const step = (currentPrice - startPrice) / points;
-
-  for (let i = 0; i <= points; i++) {
-    const noise = (Math.random() - 0.5) * currentPrice * 0.02;
-    history.push({ day: i, price: parseFloat((startPrice + step * i + noise).toFixed(2)) });
-  }
-
-  return history.map((point, idx) => ({
-    ...point,
-    ma50: idx >= 50 ? history.slice(idx - 50, idx).reduce((a, p) => a + p.price, 0) / 50 : null,
-    ma200: idx >= 199 ? history.slice(idx - 200, idx).reduce((a, p) => a + p.price, 0) / 200 : null,
-  }));
-}
+// Tickers fixos exibidos sempre na tela inicial (em ordem)
+const FIXED_TICKERS = [
+  'RAIZ4', 'QUAL3', 'CVCB3', 'PCAR3', 'COGN3', 'LWSA3', 'VAMO3', 'ANIM3', 'BEEF3', 'BMGB4',
+  'CMIN3', 'GMAT3', 'CSAN3', 'POMO4', 'USIM5', 'PETR4', 'VALE3', 'ITUB4', 'BBAS3', 'BBDC4',
+];
 
 // ---------------------------------------------------------------------------
 // App
@@ -75,6 +59,7 @@ export default function App() {
   const [expandedTickers, setExpandedTickers] = useState<Set<string>>(new Set());
   const [optionsCache, setOptionsCache] = useState<Record<string, OptionData[]>>({});
   const [loadingOptions, setLoadingOptions] = useState<string | null>(null);
+  const [showStocksList, setShowStocksList] = useState(false);
 
   const toggleExpand = async (ticker: string) => {
     const isExpanded = expandedTickers.has(ticker);
@@ -117,8 +102,9 @@ export default function App() {
       });
       setOptionsCache(prev => ({ ...prev, ...newCache }));
 
-      if (!selectedTicker && res.stocks.length > 0) {
-        setSelectedTicker(res.stocks[0].ticker);
+      if (!selectedTicker) {
+        const first = FIXED_TICKERS.find(t => res.stocks.some(s => s.ticker === t));
+        if (first) setSelectedTicker(first);
       }
     } catch (err: any) {
       clearTimeout(wakeupTimer);
@@ -176,20 +162,20 @@ export default function App() {
   const fonte = response?.fonte ?? '';
   const lastUpdate = response?.lastUpdate ?? allStocks[0]?.ultimaAtualizacao ?? '';
 
-  // ---- ação selecionada ----------------------------------------------------
-  const selectedStock = useMemo(
-    () => allStocks.find((s) => s.ticker === selectedTicker),
-    [allStocks, selectedTicker]
+  // Mantém apenas os tickers fixos, na ordem definida
+  const displayStocks = useMemo(() =>
+    FIXED_TICKERS
+      .map(t => allStocks.find(s => s.ticker === t))
+      .filter((s): s is StockData => s !== undefined),
+    [allStocks]
   );
 
-  const historicalData = useMemo(() => {
-    if (!selectedStock) return [];
-    return generateHistory(selectedStock.preco, selectedStock.var5a);
-  }, [selectedStock]);
+  const isSearching = searchTerm.trim().length > 0;
 
   // ---- filtro + ordenação --------------------------------------------------
   const filteredStocks = useMemo(() => {
-    let stocks = allStocks.filter(
+    const source = isSearching ? allStocks : displayStocks;
+    let stocks = source.filter(
       (s) =>
         s.ticker.toLowerCase().includes(searchTerm.toLowerCase()) ||
         s.empresa.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -207,26 +193,26 @@ export default function App() {
         return 0;
       });
     }
-    return stocks.slice(0, 15);
-  }, [allStocks, searchTerm, sortConfig]);
+    return stocks;
+  }, [allStocks, displayStocks, isSearching, searchTerm, sortConfig]);
 
   // ---- estatísticas --------------------------------------------------------
   const stats = useMemo(() => {
-    if (allStocks.length === 0)
+    if (displayStocks.length === 0)
       return { avgPrice: 0, topGainer: null, topLoser: null, pieData: [] };
 
-    const avgPrice = allStocks.reduce((a, s) => a + s.preco, 0) / allStocks.length;
-    const topGainer = [...allStocks].sort((a, b) => (b.varDia ?? -999) - (a.varDia ?? -999))[0];
-    const topLoser = [...allStocks].sort((a, b) => (a.varDia ?? 999) - (b.varDia ?? 999))[0];
+    const avgPrice = displayStocks.reduce((a, s) => a + s.preco, 0) / displayStocks.length;
+    const topGainer = [...displayStocks].sort((a, b) => (b.varDia ?? -999) - (a.varDia ?? -999))[0];
+    const topLoser = [...displayStocks].sort((a, b) => (a.varDia ?? 999) - (b.varDia ?? 999))[0];
 
-    const sectorMap = allStocks.reduce<Record<string, number>>((acc, s) => {
+    const sectorMap = displayStocks.reduce<Record<string, number>>((acc, s) => {
       acc[s.setor] = (acc[s.setor] || 0) + 1;
       return acc;
     }, {});
     const pieData = Object.entries(sectorMap).map(([name, value]) => ({ name, value }));
 
     return { avgPrice, topGainer, topLoser, pieData };
-  }, [allStocks]);
+  }, [displayStocks]);
 
   const handleSort = (key: keyof StockData) => {
     setSortConfig((prev) =>
@@ -266,6 +252,53 @@ export default function App() {
     );
   }
 
+
+  // ---- página: lista de ativos ---------------------------------------------
+  if (showStocksList) {
+    return (
+      <div className="min-h-screen bg-[#F5F5F4] text-[#141414] font-sans">
+        <div className="bg-white border-b border-[#141414]/10 px-6 py-4 flex items-center gap-4 sticky top-0 z-10">
+          <button
+            onClick={() => setShowStocksList(false)}
+            className="p-2 rounded-full hover:bg-[#F5F5F4] transition-colors"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <div>
+            <h2 className="font-bold text-lg">Carteira Monitorada</h2>
+            <p className="text-xs text-[#141414]/40">{displayStocks.length} ativos</p>
+          </div>
+        </div>
+        <div className="max-w-2xl mx-auto p-6 space-y-2">
+          {displayStocks.map((stock, idx) => (
+            <motion.div
+              key={stock.ticker}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: idx * 0.03 }}
+              className="bg-white rounded-2xl border border-[#141414]/5 px-5 py-4 flex items-center justify-between hover:border-[#141414]/20 transition-all cursor-pointer"
+              onClick={() => { setShowStocksList(false); setSelectedTicker(stock.ticker); }}
+            >
+              <div className="flex items-center gap-4">
+                <span className="text-[10px] font-bold text-[#141414]/30 w-5 text-right">{idx + 1}</span>
+                <div>
+                  <p className="font-mono font-bold text-sm">{stock.ticker}</p>
+                  <p className="text-xs text-[#141414]/50 truncate max-w-[200px]">{stock.empresa}</p>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="font-mono font-bold text-sm">R$ {stock.preco.toFixed(2)}</p>
+                <p className={cn("text-xs font-mono", varClass(stock.varDia))}>
+                  {fmtPct(stock.varDia)}
+                </p>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   // ---- render principal ----------------------------------------------------
   return (
     <div className="min-h-screen bg-[#F5F5F4] text-[#141414] font-sans p-4 md:p-8">
@@ -275,9 +308,6 @@ export default function App() {
         <header className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-[#141414]/10 pb-6">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Stock Radar BR</h1>
-            <p className="text-sm text-[#141414]/60 uppercase tracking-widest mt-1">
-              Ações abaixo de R$ 10,00 • B3
-            </p>
           </div>
           <div className="flex items-center gap-3 flex-wrap">
             {/* Badge de fonte */}
@@ -296,11 +326,19 @@ export default function App() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#141414]/40" />
               <input
                 type="text"
-                placeholder="Buscar ticker, empresa ou setor..."
-                className="pl-10 pr-4 py-2 bg-white border border-[#141414]/10 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]/10 w-full md:w-64 transition-all"
+                placeholder="Buscar qualquer ativo..."
+                className="pl-10 pr-8 py-2 bg-white border border-[#141414]/10 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]/10 w-full md:w-64 transition-all"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
+              {isSearching && (
+                <button
+                  onClick={() => setSearchTerm('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#141414]/30 hover:text-[#141414]/60"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
 
             {/* Botão de pesquisar */}
@@ -341,23 +379,50 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard label="Total de Ativos" value={allStocks.length} icon={<Layers className="w-4 h-4" />} />
-          <StatCard label="Preço Médio" value={`R$ ${stats.avgPrice.toFixed(2)}`} icon={<DollarSign className="w-4 h-4" />} />
-          <StatCard
-            label="Maior Alta (Dia)"
-            value={stats.topGainer?.ticker ?? '-'}
-            subValue={stats.topGainer?.varDia != null ? `${stats.topGainer.varDia > 0 ? '+' : ''}${stats.topGainer.varDia.toFixed(2)}%` : undefined}
-            icon={<TrendingUp className="w-4 h-4 text-emerald-500" />}
-          />
-          <StatCard
-            label="Maior Baixa (Dia)"
-            value={stats.topLoser?.ticker ?? '-'}
-            subValue={stats.topLoser?.varDia != null ? `${stats.topLoser.varDia.toFixed(2)}%` : undefined}
-            icon={<TrendingDown className="w-4 h-4 text-rose-500" />}
-          />
-        </div>
+        {/* Vista de busca: só tabela */}
+        {isSearching ? (
+          <div className="bg-white rounded-2xl border border-[#141414]/5 shadow-sm overflow-hidden">
+            <div className="p-6 border-b border-[#141414]/5 flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold text-lg">Resultados para "{searchTerm}"</h3>
+                <p className="text-xs text-[#141414]/40 mt-0.5">{filteredStocks.length} ativo{filteredStocks.length !== 1 ? 's' : ''} encontrado{filteredStocks.length !== 1 ? 's' : ''}</p>
+              </div>
+              <Activity className="w-4 h-4 text-[#141414]/40" />
+            </div>
+            <StocksTable
+              stocks={filteredStocks}
+              selectedTicker={selectedTicker}
+              expandedTickers={expandedTickers}
+              optionsCache={optionsCache}
+              loadingOptions={loadingOptions}
+              onSort={handleSort}
+              onRowClick={(ticker) => { setSelectedTicker(ticker); toggleExpand(ticker); }}
+            />
+          </div>
+        ) : (
+          <>
+            {/* Stats Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <StatCard
+                label="Total de Ativos"
+                value={displayStocks.length}
+                icon={<Layers className="w-4 h-4" />}
+                onIconClick={() => setShowStocksList(true)}
+              />
+              <StatCard label="Preço Médio" value={`R$ ${stats.avgPrice.toFixed(2)}`} icon={<DollarSign className="w-4 h-4" />} />
+              <StatCard
+                label="Maior Alta (Dia)"
+                value={stats.topGainer?.ticker ?? '-'}
+                subValue={stats.topGainer?.varDia != null ? `${stats.topGainer.varDia.toFixed(2)}%` : undefined}
+                icon={<TrendingUp className="w-4 h-4 text-emerald-500" />}
+              />
+              <StatCard
+                label="Maior Baixa (Dia)"
+                value={stats.topLoser?.ticker ?? '-'}
+                subValue={stats.topLoser?.varDia != null ? `${stats.topLoser.varDia.toFixed(2)}%` : undefined}
+                icon={<TrendingDown className="w-4 h-4 text-rose-500" />}
+              />
+            </div>
 
         {/* Charts Section */}
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
@@ -375,7 +440,7 @@ export default function App() {
               <div className="h-[250px] md:h-[300px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
-                    data={allStocks.slice(0, 15)}
+                    data={displayStocks}
                     margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
                     onClick={(data) => data && setSelectedTicker(data.activeLabel ?? null)}
                   >
@@ -384,7 +449,7 @@ export default function App() {
                     <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10 }} />
                     <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '12px' }} cursor={{ fill: '#14141405' }} />
                     <Bar dataKey="preco" fill="#141414" radius={[4, 4, 0, 0]} barSize={32} className="cursor-pointer">
-                      {allStocks.slice(0, 15).map((entry, index) => (
+                      {displayStocks.map((entry, index) => (
                         <Cell
                           key={`cell-${index}`}
                           fill={entry.ticker === selectedTicker ? '#3b82f6' : '#141414'}
@@ -396,44 +461,6 @@ export default function App() {
                 </ResponsiveContainer>
               </div>
             </div>
-
-            {/* Médias Móveis (histórico sintético) */}
-            <AnimatePresence mode="wait">
-              {selectedStock && (
-                <motion.div
-                  key={selectedStock.ticker}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -20 }}
-                  className="bg-white p-4 md:p-6 rounded-2xl border border-[#141414]/5 shadow-sm"
-                >
-                  <div className="flex items-center justify-between mb-6">
-                    <div>
-                      <h3 className="font-semibold text-lg">Médias Móveis: {selectedStock.ticker}</h3>
-                      <p className="text-xs text-[#141414]/40">Tendência projetada com base no preço atual e variação de 5 anos</p>
-                    </div>
-                    <div className="flex items-center gap-4 text-[10px] font-bold uppercase tracking-wider">
-                      <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-[#141414]" /> Preço</div>
-                      <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-blue-500" /> MA50</div>
-                      <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-orange-500" /> MA200</div>
-                    </div>
-                  </div>
-                  <div className="h-[250px] md:h-[300px] w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={historicalData}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#14141405" />
-                        <XAxis dataKey="day" hide />
-                        <YAxis domain={['auto', 'auto']} axisLine={false} tickLine={false} tick={{ fontSize: 10 }} orientation="right" />
-                        <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '12px' }} />
-                        <Area type="monotone" dataKey="price" fill="#f3f4f6" stroke="#141414" strokeWidth={1} fillOpacity={0.5} />
-                        <Line type="monotone" dataKey="ma50" stroke="#3b82f6" strokeWidth={2} dot={false} />
-                        <Line type="monotone" dataKey="ma200" stroke="#f97316" strokeWidth={2} dot={false} />
-                      </ComposedChart>
-                    </ResponsiveContainer>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
           </div>
 
           {/* Setor */}
@@ -463,7 +490,7 @@ export default function App() {
           <div className="p-6 border-b border-[#141414]/5 flex items-center justify-between">
             <div>
               <h3 className="font-semibold text-lg">Visão Detalhada</h3>
-              <p className="text-xs text-[#141414]/40 mt-0.5">{filteredStocks.length} de {allStocks.length} ativos</p>
+              <p className="text-xs text-[#141414]/40 mt-0.5">{filteredStocks.length} de {displayStocks.length} ativos</p>
             </div>
             <Activity className="w-4 h-4 text-[#141414]/40" />
           </div>
@@ -537,9 +564,9 @@ export default function App() {
                           <ExpandedOptionsRow
                             key={`opts-${stock.ticker}`}
                             ticker={stock.ticker}
+                            currentPrice={stock.preco}
                             opts={optionsCache[stock.ticker]}
                             isLoading={loadingOptions === stock.ticker || !optionsCache[stock.ticker]}
-                            stockPrice={stock.preco}
                           />
                         )}
                       </AnimatePresence>
@@ -550,8 +577,10 @@ export default function App() {
             </table>
           </div>
         </div>
+          </>
+        )}
 
-        {/* Footer */}
+                {/* Footer */}
         <footer className="pt-8 pb-12 text-center space-y-2">
           <p className="text-[10px] uppercase tracking-[0.2em] text-[#141414]/40">
             Atualizado em: {lastUpdate || new Date().toLocaleDateString('pt-BR')}
@@ -580,18 +609,120 @@ function varClass(val: number | null): string {
 }
 
 // ---------------------------------------------------------------------------
+// StocksTable
+// ---------------------------------------------------------------------------
+function StocksTable({
+  stocks,
+  selectedTicker,
+  expandedTickers,
+  optionsCache,
+  loadingOptions,
+  onSort,
+  onRowClick,
+}: {
+  stocks: StockData[];
+  selectedTicker: string | null;
+  expandedTickers: Set<string>;
+  optionsCache: Record<string, OptionData[]>;
+  loadingOptions: string | null;
+  onSort: (key: keyof StockData) => void;
+  onRowClick: (ticker: string) => void;
+}) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-left border-collapse">
+        <thead>
+          <tr className="bg-[#F5F5F4]/50 border-b border-[#141414]/5">
+            <TableHead label="Ticker" sortKey="ticker" onSort={onSort} />
+            <TableHead label="Empresa" sortKey="empresa" onSort={onSort} />
+            <TableHead label="Preço" sortKey="preco" onSort={onSort} />
+            <TableHead label="Setor" sortKey="setor" onSort={onSort} />
+            <TableHead label="Var. Dia" sortKey="varDia" onSort={onSort} />
+            <TableHead label="Var. Semana" sortKey="varSemana" onSort={onSort} />
+            <TableHead label="Var. Ano" sortKey="var1a" onSort={onSort} />
+            <TableHead label="P/L" sortKey="pl" onSort={onSort} />
+            <TableHead label="P/VP" sortKey="pvp" onSort={onSort} />
+            <TableHead label="Upside" sortKey="upsideGraham" onSort={onSort} />
+          </tr>
+        </thead>
+        <tbody>
+            {stocks.map((stock) => (
+              <React.Fragment key={stock.ticker}>
+                <tr
+                  onClick={() => onRowClick(stock.ticker)}
+                  className={cn(
+                    "border-b border-[#141414]/5 hover:bg-[#F5F5F4]/30 transition-colors cursor-pointer",
+                    selectedTicker === stock.ticker && "bg-blue-50/20"
+                  )}
+                >
+                  <td className="px-6 py-4 font-mono font-bold text-sm">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={cn(
+                          "text-[#141414]/20 transition-transform duration-200 inline-block",
+                          expandedTickers.has(stock.ticker) && "rotate-180"
+                        )}
+                      >
+                        ▾
+                      </span>
+                      {stock.ticker}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-sm text-[#141414]/70 truncate max-w-[200px]">{stock.empresa}</td>
+                  <td className="px-6 py-4 font-mono text-sm">R$ {stock.preco.toFixed(2)}</td>
+                  <td className="px-6 py-4 text-xs uppercase tracking-wider text-[#141414]/50">{stock.setor}</td>
+                  <td className={cn("px-6 py-4 font-mono text-sm", varClass(stock.varDia))}>
+                    {fmtPct(stock.varDia)}
+                  </td>
+                  <td className={cn("px-6 py-4 font-mono text-sm", varClass(stock.varSemana))}>
+                    {fmtPct(stock.varSemana)}
+                  </td>
+                  <td className={cn("px-6 py-4 font-mono text-sm", varClass(stock.var1a))}>
+                    {fmtPct(stock.var1a)}
+                  </td>
+                  <td className="px-6 py-4 font-mono text-sm">{stock.pl?.toFixed(2) ?? '-'}</td>
+                  <td className="px-6 py-4 font-mono text-sm">{stock.pvp?.toFixed(2) ?? '-'}</td>
+                  <td className={cn("px-6 py-4 font-mono text-sm", varClass(stock.upsideGraham))}>
+                    {fmtPct(stock.upsideGraham)}
+                  </td>
+                </tr>
+
+                {expandedTickers.has(stock.ticker) && (
+                  <ExpandedOptionsRow
+                    key={`opts-${stock.ticker}`}
+                    ticker={stock.ticker}
+                    currentPrice={stock.preco}
+                    opts={optionsCache[stock.ticker]}
+                    isLoading={loadingOptions === stock.ticker || !optionsCache[stock.ticker]}
+                  />
+                )}
+              </React.Fragment>
+            ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
 function StatCard({
-  label, value, subValue, icon,
+  label, value, subValue, icon, onIconClick,
 }: {
-  label: string; value: string | number; subValue?: string; icon: React.ReactNode;
+  label: string; value: string | number; subValue?: string; icon: React.ReactNode; onIconClick?: () => void;
 }) {
   return (
     <div className="bg-white p-6 rounded-2xl border border-[#141414]/5 shadow-sm flex flex-col justify-between group hover:border-[#141414]/20 transition-all">
       <div className="flex items-center justify-between mb-4">
         <span className="text-[10px] uppercase font-bold tracking-widest text-[#141414]/40">{label}</span>
-        <div className="p-2 bg-[#F5F5F4] rounded-lg group-hover:bg-[#141414] group-hover:text-white transition-colors">
+        <div
+          onClick={onIconClick}
+          className={cn(
+            "p-2 bg-[#F5F5F4] rounded-lg group-hover:bg-[#141414] group-hover:text-white transition-colors",
+            onIconClick && "cursor-pointer"
+          )}
+        >
           {icon}
         </div>
       </div>
@@ -621,23 +752,23 @@ function TableHead({
   );
 }
 
-function moneyness(strike: number | null, stockPrice: number, tipo: 'CALL' | 'PUT'): 'ITM' | 'ATM' | 'OTM' {
-  if (strike == null) return 'OTM';
-  const diff = (strike - stockPrice) / stockPrice;
-  if (Math.abs(diff) <= 0.01) return 'ATM';
-  if (tipo === 'CALL') return diff < 0 ? 'ITM' : 'OTM';
-  return diff > 0 ? 'ITM' : 'OTM';
+function getMoneyness(strike: number | null, currentPrice: number, tipo: 'CALL' | 'PUT'): 'ITM' | 'ATM' | 'OTM' {
+  if (strike === null) return 'OTM';
+  const diff = Math.abs(strike - currentPrice) / currentPrice;
+  if (diff <= 0.02) return 'ATM';
+  if (tipo === 'CALL') return strike < currentPrice ? 'ITM' : 'OTM';
+  return strike > currentPrice ? 'ITM' : 'OTM';
 }
 
-function MoneynessBadge({ label }: { label: 'ITM' | 'ATM' | 'OTM' }) {
+function MoneynessBadge({ moneyness }: { moneyness: 'ITM' | 'ATM' | 'OTM' }) {
   const styles = {
     ITM: 'bg-emerald-100 text-emerald-700',
     ATM: 'bg-amber-100 text-amber-700',
-    OTM: 'bg-[#141414]/8 text-[#141414]/50',
-  } as const;
+    OTM: 'bg-[#141414]/5 text-[#141414]/40',
+  };
   return (
-    <span className={`inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[9px] font-bold tracking-wider ${styles[label]}`}>
-      {label}
+    <span translate="no" className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${styles[moneyness]}`}>
+      {moneyness}
     </span>
   );
 }
@@ -646,13 +777,13 @@ function ExpandedOptionsRow({
   ticker,
   isLoading,
   opts,
-  stockPrice,
+  currentPrice,
 }: {
   key?: string;
   ticker: string;
   isLoading: boolean;
   opts: OptionData[] | undefined;
-  stockPrice: number;
+  currentPrice: number;
 }) {
   const vencimentos = useMemo(() => {
     if (!opts) return [];
@@ -680,12 +811,7 @@ function ExpandedOptionsRow({
   const puts = filteredOpts.filter((o) => o.tipo === 'PUT');
 
   return (
-    <motion.tr
-      initial={{ opacity: 0, height: 0 }}
-      animate={{ opacity: 1, height: 'auto' }}
-      exit={{ opacity: 0, height: 0 }}
-      className="bg-[#FBFBFA]"
-    >
+    <tr className="bg-[#FBFBFA]">
       <td colSpan={9} className="px-6 py-8">
         {isLoading ? (
           <div className="flex items-center justify-center gap-2 py-8 text-[#141414]/40">
@@ -740,25 +866,28 @@ function ExpandedOptionsRow({
                   <table className="w-full text-left text-xs">
                     <thead className="bg-[#F5F5F4]/50 border-b border-[#141414]/5">
                       <tr>
-                        <th className="px-4 py-2 font-bold text-[#141414]/40">Símbolo</th>
-                        <th className="px-4 py-2 font-bold text-[#141414]/40 text-center"></th>
+                        <th className="px-4 py-2 font-bold text-[#141414]/40 whitespace-nowrap">Símbolo</th>
+                        <th className="px-4 py-2 w-20 text-center"></th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40">Strike</th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right">Prêmio</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {calls.map((opt) => (
-                        <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0 hover:bg-[#F5F5F4]/50 transition-colors">
-                          <td className="px-4 py-2 font-mono font-bold">{opt.ticker}</td>
-                          <td className="px-4 py-2 text-center">
-                            <MoneynessBadge label={moneyness(opt.strike, stockPrice, 'CALL')} />
-                          </td>
-                          <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
-                          <td className="px-4 py-2 font-mono text-right text-emerald-600 font-bold">
-                            R$ {opt.preco?.toFixed(2)}
-                          </td>
-                        </tr>
-                      ))}
+                      {calls.map((opt) => {
+                        const moneyness = getMoneyness(opt.strike, currentPrice, 'CALL');
+                        return (
+                          <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0 hover:bg-[#F5F5F4]/50 transition-colors">
+                            <td className="px-4 py-2 font-mono font-bold whitespace-nowrap">{opt.ticker}</td>
+                            <td className="px-4 py-2 w-20 text-center">
+                              <MoneynessBadge moneyness={moneyness} />
+                            </td>
+                            <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
+                            <td className="px-4 py-2 font-mono text-right text-emerald-600 font-bold">
+                              R$ {opt.preco?.toFixed(2)}
+                            </td>
+                          </tr>
+                        );
+                      })}
                       {calls.length === 0 && (
                         <tr>
                           <td colSpan={4} className="px-4 py-4 text-center text-[#141414]/30">
@@ -790,25 +919,28 @@ function ExpandedOptionsRow({
                   <table className="w-full text-left text-xs">
                     <thead className="bg-[#F5F5F4]/50 border-b border-[#141414]/5">
                       <tr>
-                        <th className="px-4 py-2 font-bold text-[#141414]/40">Símbolo</th>
-                        <th className="px-4 py-2 font-bold text-[#141414]/40 text-center"></th>
+                        <th className="px-4 py-2 font-bold text-[#141414]/40 whitespace-nowrap">Símbolo</th>
+                        <th className="px-4 py-2 w-20 text-center"></th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40">Strike</th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right">Prêmio</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {puts.map((opt) => (
-                        <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0 hover:bg-[#F5F5F4]/50 transition-colors">
-                          <td className="px-4 py-2 font-mono font-bold">{opt.ticker}</td>
-                          <td className="px-4 py-2 text-center">
-                            <MoneynessBadge label={moneyness(opt.strike, stockPrice, 'PUT')} />
-                          </td>
-                          <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
-                          <td className="px-4 py-2 font-mono text-right text-rose-600 font-bold">
-                            R$ {opt.preco?.toFixed(2)}
-                          </td>
-                        </tr>
-                      ))}
+                      {puts.map((opt) => {
+                        const moneyness = getMoneyness(opt.strike, currentPrice, 'PUT');
+                        return (
+                          <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0 hover:bg-[#F5F5F4]/50 transition-colors">
+                            <td className="px-4 py-2 font-mono font-bold whitespace-nowrap">{opt.ticker}</td>
+                            <td className="px-4 py-2 w-20 text-center">
+                              <MoneynessBadge moneyness={moneyness} />
+                            </td>
+                            <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
+                            <td className="px-4 py-2 font-mono text-right text-rose-600 font-bold">
+                              R$ {opt.preco?.toFixed(2)}
+                            </td>
+                          </tr>
+                        );
+                      })}
                       {puts.length === 0 && (
                         <tr>
                           <td colSpan={4} className="px-4 py-4 text-center text-[#141414]/30">
@@ -824,6 +956,6 @@ function ExpandedOptionsRow({
           </div>
         )}
       </td>
-    </motion.tr>
+    </tr>
   );
 }
