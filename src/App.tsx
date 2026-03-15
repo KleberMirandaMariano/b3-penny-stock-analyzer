@@ -766,7 +766,7 @@ function MoneynessBadge({ moneyness }: { moneyness: 'ITM' | 'ATM' | 'OTM' }) {
     OTM: 'bg-[#141414]/5 text-[#141414]/40',
   };
   return (
-    <span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${styles[moneyness]}`}>
+    <span translate="no" className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${styles[moneyness]}`}>
       {moneyness}
     </span>
   );
@@ -866,6 +866,7 @@ function ExpandedOptionsRow({
                     <thead className="bg-[#F5F5F4]/50 border-b border-[#141414]/5">
                       <tr>
                         <th className="px-4 py-2 font-bold text-[#141414]/40">Símbolo</th>
+                        <th className="px-4 py-2 font-bold text-[#141414]/40 text-center w-16"></th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40">Batida</th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right">Prêmio</th>
                       </tr>
@@ -875,11 +876,9 @@ function ExpandedOptionsRow({
                         const moneyness = getMoneyness(opt.strike, currentPrice, 'CALL');
                         return (
                           <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0 hover:bg-[#F5F5F4]/50 transition-colors">
-                            <td className="px-4 py-2 font-mono font-bold">
-                              <div className="flex items-center gap-2">
-                                {opt.ticker}
-                                <MoneynessBadge moneyness={moneyness} />
-                              </div>
+                            <td className="px-4 py-2 font-mono font-bold">{opt.ticker}</td>
+                            <td className="px-4 py-2 text-center">
+                              <MoneynessBadge moneyness={moneyness} />
                             </td>
                             <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
                             <td className="px-4 py-2 font-mono text-right text-emerald-600 font-bold">
@@ -890,7 +889,7 @@ function ExpandedOptionsRow({
                       })}
                       {calls.length === 0 && (
                         <tr>
-                          <td colSpan={3} className="px-4 py-4 text-center text-[#141414]/30">
+                          <td colSpan={4} className="px-4 py-4 text-center text-[#141414]/30">
                             Nenhuma CALL disponível
                           </td>
                         </tr>
@@ -920,6 +919,7 @@ function ExpandedOptionsRow({
                     <thead className="bg-[#F5F5F4]/50 border-b border-[#141414]/5">
                       <tr>
                         <th className="px-4 py-2 font-bold text-[#141414]/40">Símbolo</th>
+                        <th className="px-4 py-2 font-bold text-[#141414]/40 text-center w-16"></th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40">Batida</th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right">Prêmio</th>
                       </tr>
@@ -929,11 +929,9 @@ function ExpandedOptionsRow({
                         const moneyness = getMoneyness(opt.strike, currentPrice, 'PUT');
                         return (
                           <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0 hover:bg-[#F5F5F4]/50 transition-colors">
-                            <td className="px-4 py-2 font-mono font-bold">
-                              <div className="flex items-center gap-2">
-                                {opt.ticker}
-                                <MoneynessBadge moneyness={moneyness} />
-                              </div>
+                            <td className="px-4 py-2 font-mono font-bold">{opt.ticker}</td>
+                            <td className="px-4 py-2 text-center">
+                              <MoneynessBadge moneyness={moneyness} />
                             </td>
                             <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
                             <td className="px-4 py-2 font-mono text-right text-rose-600 font-bold">
@@ -944,7 +942,7 @@ function ExpandedOptionsRow({
                       })}
                       {puts.length === 0 && (
                         <tr>
-                          <td colSpan={3} className="px-4 py-4 text-center text-[#141414]/30">
+                          <td colSpan={4} className="px-4 py-4 text-center text-[#141414]/30">
                             Nenhuma PUT disponível
                           </td>
                         </tr>
