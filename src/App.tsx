@@ -537,6 +537,7 @@ export default function App() {
                           <ExpandedOptionsRow
                             key={`opts-${stock.ticker}`}
                             ticker={stock.ticker}
+                            currentPrice={stock.preco}
                             opts={optionsCache[stock.ticker]}
                             isLoading={loadingOptions === stock.ticker || !optionsCache[stock.ticker]}
                           />
@@ -620,15 +621,38 @@ function TableHead({
   );
 }
 
+function getMoneyness(strike: number | null, currentPrice: number, tipo: 'CALL' | 'PUT'): 'ITM' | 'ATM' | 'OTM' {
+  if (strike === null) return 'OTM';
+  const diff = Math.abs(strike - currentPrice) / currentPrice;
+  if (diff <= 0.02) return 'ATM';
+  if (tipo === 'CALL') return strike < currentPrice ? 'ITM' : 'OTM';
+  return strike > currentPrice ? 'ITM' : 'OTM';
+}
+
+function MoneynessBadge({ moneyness }: { moneyness: 'ITM' | 'ATM' | 'OTM' }) {
+  const styles = {
+    ITM: 'bg-emerald-100 text-emerald-700',
+    ATM: 'bg-amber-100 text-amber-700',
+    OTM: 'bg-[#141414]/5 text-[#141414]/40',
+  };
+  return (
+    <span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${styles[moneyness]}`}>
+      {moneyness}
+    </span>
+  );
+}
+
 function ExpandedOptionsRow({
   ticker,
   isLoading,
   opts,
+  currentPrice,
 }: {
   key?: string;
   ticker: string;
   isLoading: boolean;
   opts: OptionData[] | undefined;
+  currentPrice: number;
 }) {
   const vencimentos = useMemo(() => {
     if (!opts) return [];
@@ -722,15 +746,23 @@ function ExpandedOptionsRow({
                       </tr>
                     </thead>
                     <tbody>
-                      {calls.map((opt) => (
-                        <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0 hover:bg-[#F5F5F4]/50 transition-colors">
-                          <td className="px-4 py-2 font-mono font-bold">{opt.ticker}</td>
-                          <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
-                          <td className="px-4 py-2 font-mono text-right text-emerald-600 font-bold">
-                            R$ {opt.preco?.toFixed(2)}
-                          </td>
-                        </tr>
-                      ))}
+                      {calls.map((opt) => {
+                        const moneyness = getMoneyness(opt.strike, currentPrice, 'CALL');
+                        return (
+                          <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0 hover:bg-[#F5F5F4]/50 transition-colors">
+                            <td className="px-4 py-2 font-mono font-bold">
+                              <div className="flex items-center gap-2">
+                                {opt.ticker}
+                                <MoneynessBadge moneyness={moneyness} />
+                              </div>
+                            </td>
+                            <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
+                            <td className="px-4 py-2 font-mono text-right text-emerald-600 font-bold">
+                              R$ {opt.preco?.toFixed(2)}
+                            </td>
+                          </tr>
+                        );
+                      })}
                       {calls.length === 0 && (
                         <tr>
                           <td colSpan={3} className="px-4 py-4 text-center text-[#141414]/30">
@@ -768,15 +800,23 @@ function ExpandedOptionsRow({
                       </tr>
                     </thead>
                     <tbody>
-                      {puts.map((opt) => (
-                        <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0 hover:bg-[#F5F5F4]/50 transition-colors">
-                          <td className="px-4 py-2 font-mono font-bold">{opt.ticker}</td>
-                          <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
-                          <td className="px-4 py-2 font-mono text-right text-rose-600 font-bold">
-                            R$ {opt.preco?.toFixed(2)}
-                          </td>
-                        </tr>
-                      ))}
+                      {puts.map((opt) => {
+                        const moneyness = getMoneyness(opt.strike, currentPrice, 'PUT');
+                        return (
+                          <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0 hover:bg-[#F5F5F4]/50 transition-colors">
+                            <td className="px-4 py-2 font-mono font-bold">
+                              <div className="flex items-center gap-2">
+                                {opt.ticker}
+                                <MoneynessBadge moneyness={moneyness} />
+                              </div>
+                            </td>
+                            <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
+                            <td className="px-4 py-2 font-mono text-right text-rose-600 font-bold">
+                              R$ {opt.preco?.toFixed(2)}
+                            </td>
+                          </tr>
+                        );
+                      })}
                       {puts.length === 0 && (
                         <tr>
                           <td colSpan={3} className="px-4 py-4 text-center text-[#141414]/30">
