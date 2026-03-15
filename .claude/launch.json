@@ -3,14 +3,23 @@
   "configurations": [
     {
       "name": "API (Express)",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "server"],
+      "runtimeExecutable": "C:/Program Files/nodejs/node.exe",
+      "runtimeArgs": [
+        "C:/Users/klebe/OneDrive/Projetos/b3-penny-stock-analyzer/node_modules/tsx/dist/cli.mjs",
+        "server/index.ts"
+      ],
       "port": 3001
     },
     {
       "name": "Frontend (Vite)",
-      "runtimeExecutable": "npm.cmd",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeExecutable": "C:/Program Files/nodejs/node.exe",
+      "runtimeArgs": [
+        "C:/Users/klebe/OneDrive/Projetos/b3-penny-stock-analyzer/node_modules/vite/bin/vite.js",
+        "--port",
+        "3000",
+        "--host",
+        "0.0.0.0"
+      ],
       "port": 3000
     }
   ]

@@ -83,7 +83,7 @@ export async function getStocks(): Promise<StocksResponse> {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const parsed = parseApiResponse(data);
-    if (parsed.stocks.length === 0) throw new Error('API retornou lista vazia');
+    if (parsed.stocks.length < 10) throw new Error('Dados insuficientes da API');
     return parsed;
   } catch {
     // Fallback: dados estáticos do CSV embutido
