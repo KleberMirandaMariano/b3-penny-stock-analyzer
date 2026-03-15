@@ -539,6 +539,7 @@ export default function App() {
                             ticker={stock.ticker}
                             opts={optionsCache[stock.ticker]}
                             isLoading={loadingOptions === stock.ticker || !optionsCache[stock.ticker]}
+                            stockPrice={stock.preco}
                           />
                         )}
                       </AnimatePresence>
@@ -620,15 +621,38 @@ function TableHead({
   );
 }
 
+function moneyness(strike: number | null, stockPrice: number, tipo: 'CALL' | 'PUT'): 'ITM' | 'ATM' | 'OTM' {
+  if (strike == null) return 'OTM';
+  const diff = (strike - stockPrice) / stockPrice;
+  if (Math.abs(diff) <= 0.01) return 'ATM';
+  if (tipo === 'CALL') return diff < 0 ? 'ITM' : 'OTM';
+  return diff > 0 ? 'ITM' : 'OTM';
+}
+
+function MoneynessBadge({ label }: { label: 'ITM' | 'ATM' | 'OTM' }) {
+  const styles = {
+    ITM: 'bg-emerald-100 text-emerald-700',
+    ATM: 'bg-amber-100 text-amber-700',
+    OTM: 'bg-[#141414]/8 text-[#141414]/50',
+  } as const;
+  return (
+    <span className={`inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[9px] font-bold tracking-wider ${styles[label]}`}>
+      {label}
+    </span>
+  );
+}
+
 function ExpandedOptionsRow({
   ticker,
   isLoading,
   opts,
+  stockPrice,
 }: {
   key?: string;
   ticker: string;
   isLoading: boolean;
   opts: OptionData[] | undefined;
+  stockPrice: number;
 }) {
   const vencimentos = useMemo(() => {
     if (!opts) return [];
@@ -717,7 +741,8 @@ function ExpandedOptionsRow({
                     <thead className="bg-[#F5F5F4]/50 border-b border-[#141414]/5">
                       <tr>
                         <th className="px-4 py-2 font-bold text-[#141414]/40">Símbolo</th>
-                        <th className="px-4 py-2 font-bold text-[#141414]/40">Batida</th>
+                        <th className="px-4 py-2 font-bold text-[#141414]/40 text-center"></th>
+                        <th className="px-4 py-2 font-bold text-[#141414]/40">Strike</th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right">Prêmio</th>
                       </tr>
                     </thead>
@@ -725,6 +750,9 @@ function ExpandedOptionsRow({
                       {calls.map((opt) => (
                         <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0 hover:bg-[#F5F5F4]/50 transition-colors">
                           <td className="px-4 py-2 font-mono font-bold">{opt.ticker}</td>
+                          <td className="px-4 py-2 text-center">
+                            <MoneynessBadge label={moneyness(opt.strike, stockPrice, 'CALL')} />
+                          </td>
                           <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
                           <td className="px-4 py-2 font-mono text-right text-emerald-600 font-bold">
                             R$ {opt.preco?.toFixed(2)}
@@ -733,7 +761,7 @@ function ExpandedOptionsRow({
                       ))}
                       {calls.length === 0 && (
                         <tr>
-                          <td colSpan={3} className="px-4 py-4 text-center text-[#141414]/30">
+                          <td colSpan={4} className="px-4 py-4 text-center text-[#141414]/30">
                             Nenhuma CALL disponível
                           </td>
                         </tr>
@@ -763,7 +791,8 @@ function ExpandedOptionsRow({
                     <thead className="bg-[#F5F5F4]/50 border-b border-[#141414]/5">
                       <tr>
                         <th className="px-4 py-2 font-bold text-[#141414]/40">Símbolo</th>
-                        <th className="px-4 py-2 font-bold text-[#141414]/40">Batida</th>
+                        <th className="px-4 py-2 font-bold text-[#141414]/40 text-center"></th>
+                        <th className="px-4 py-2 font-bold text-[#141414]/40">Strike</th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right">Prêmio</th>
                       </tr>
                     </thead>
@@ -771,6 +800,9 @@ function ExpandedOptionsRow({
                       {puts.map((opt) => (
                         <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0 hover:bg-[#F5F5F4]/50 transition-colors">
                           <td className="px-4 py-2 font-mono font-bold">{opt.ticker}</td>
+                          <td className="px-4 py-2 text-center">
+                            <MoneynessBadge label={moneyness(opt.strike, stockPrice, 'PUT')} />
+                          </td>
                           <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
                           <td className="px-4 py-2 font-mono text-right text-rose-600 font-bold">
                             R$ {opt.preco?.toFixed(2)}
@@ -779,7 +811,7 @@ function ExpandedOptionsRow({
                       ))}
                       {puts.length === 0 && (
                         <tr>
-                          <td colSpan={3} className="px-4 py-4 text-center text-[#141414]/30">
+                          <td colSpan={4} className="px-4 py-4 text-center text-[#141414]/30">
                             Nenhuma PUT disponível
                           </td>
                         </tr>
