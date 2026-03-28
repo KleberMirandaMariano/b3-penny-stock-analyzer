@@ -17,7 +17,7 @@ import { exec, spawn, ExecException } from 'child_process';
 import path from 'path';
 import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
-import Anthropic from '@anthropic-ai/sdk';
+import Groq from 'groq-sdk';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.join(__dirname, '..');
@@ -209,9 +209,9 @@ app.get('/api/options/:ticker/live', (req: Request, res: Response) => {
 // POST /api/options/analyze  – Análise IA via Claude
 // ---------------------------------------------------------------------------
 app.post('/api/options/analyze', async (req: Request, res: Response) => {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
-    res.status(503).json({ error: 'ANTHROPIC_API_KEY não configurada no servidor.' });
+    res.status(503).json({ error: 'GROQ_API_KEY não configurada no servidor.' });
     return;
   }
 
@@ -238,9 +238,9 @@ app.post('/api/options/analyze', async (req: Request, res: Response) => {
   ].filter(Boolean).join('\n');
 
   try {
-    const client = new Anthropic({ apiKey });
-    const message = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+    const client = new Groq({ apiKey });
+    const completion = await client.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
       max_tokens: 400,
       messages: [
         {
@@ -258,10 +258,10 @@ ${context}`,
       ],
     });
 
-    const text = message.content[0].type === 'text' ? message.content[0].text : '';
+    const text = completion.choices[0]?.message?.content ?? '';
     res.json({ analise: text });
   } catch (err: any) {
-    res.status(500).json({ error: `Erro ao chamar Claude API: ${err.message ?? 'desconhecido'}` });
+    res.status(500).json({ error: `Erro ao chamar Groq API: ${err.message ?? 'desconhecido'}` });
   }
 });
 
