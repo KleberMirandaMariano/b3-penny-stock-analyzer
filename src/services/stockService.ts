@@ -2,7 +2,7 @@ import Papa from 'papaparse';
 import { RAW_STOCK_DATA, MOCK_OPTIONS_DATA } from '../data';
 import { StockData, OptionData, parseCurrency, parsePercentage, parseNumber } from '../utils';
 
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
+const API_BASE = import.meta.env.VITE_API_URL ?? '';
 
 export interface StocksResponse {
   stocks: StockData[];
@@ -116,6 +116,47 @@ export async function getOptions(ticker: string): Promise<OptionData[]> {
     }));
   } catch {
     return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Busca bid/ask ao vivo para opções de um ticker via yfinance (~15 min delay)
+// ---------------------------------------------------------------------------
+export interface LiveOptionData {
+  ticker: string;
+  tipo: 'CALL' | 'PUT';
+  strike: number | null;
+  preco: number | null;
+  bid: number | null;
+  ask: number | null;
+  volume: number | null;
+  openInterest: number | null;
+  impliedVolatility: number | null;
+  vencimento: string;
+}
+
+export async function getOptionsLive(ticker: string): Promise<{ opcoes: LiveOptionData[]; aviso?: string }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/options/${ticker}/live`, { signal: AbortSignal.timeout(35_000) });
+    if (!res.ok) return { opcoes: [] };
+    const data = await res.json();
+    return {
+      opcoes: (data.opcoes ?? []).map((o: any) => ({
+        ticker: o.ticker ?? '',
+        tipo: o.tipo ?? 'CALL',
+        strike: o.strike ?? null,
+        preco: o.preco ?? null,
+        bid: o.bid ?? null,
+        ask: o.ask ?? null,
+        volume: o.volume ?? null,
+        openInterest: o.openInterest ?? null,
+        impliedVolatility: o.impliedVolatility ?? null,
+        vencimento: o.vencimento ?? '',
+      })),
+      aviso: data.aviso,
+    };
+  } catch {
+    return { opcoes: [] };
   }
 }
 

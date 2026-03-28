@@ -12,7 +12,7 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
-    port: 3000,
+    port: process.env.PORT ? parseInt(process.env.PORT) : 3000,
     // HMR desabilitado quando rodando no AI Studio
     hmr: process.env.DISABLE_HMR !== 'true',
     proxy: {

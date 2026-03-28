@@ -11,6 +11,12 @@ export interface OptionData {
   strike: number | null;
   preco: number | null;
   vencimento: string;
+  // Campos ao vivo (yfinance, ~15 min delay)
+  bid?: number | null;
+  ask?: number | null;
+  volume?: number | null;
+  openInterest?: number | null;
+  impliedVolatility?: number | null;
 }
 
 export interface StockData {

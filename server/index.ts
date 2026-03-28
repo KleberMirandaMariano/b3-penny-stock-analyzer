@@ -13,7 +13,7 @@
  */
 
 import express, { Request, Response, NextFunction } from 'express';
-import { exec, ExecException } from 'child_process';
+import { exec, spawn, ExecException } from 'child_process';
 import path from 'path';
 import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -162,6 +162,46 @@ app.get('/api/options/:ticker', (req: Request, res: Response) => {
   } catch {
     res.json({ opcoes: [] });
   }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/options/:ticker/live  – Bid/Ask em tempo real via yfinance (~15min)
+// ---------------------------------------------------------------------------
+app.get('/api/options/:ticker/live', (req: Request, res: Response) => {
+  const ticker = req.params.ticker.toUpperCase();
+  const script = path.join(ROOT_DIR, 'scripts', 'fetch_option_live.py');
+
+  if (!existsSync(script)) {
+    res.status(404).json({ error: 'Script de dados ao vivo não encontrado.', opcoes: [] });
+    return;
+  }
+
+  const python = process.platform === 'win32' ? 'python' : 'python3';
+  const proc = spawn(python, [script, ticker]);
+
+  let stdout = '';
+  let stderr = '';
+
+  proc.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+  proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+
+  const timeout = setTimeout(() => {
+    proc.kill();
+    if (!res.headersSent) {
+      res.status(504).json({ error: 'Timeout ao buscar dados ao vivo.', opcoes: [] });
+    }
+  }, 30_000);
+
+  proc.on('close', () => {
+    clearTimeout(timeout);
+    if (res.headersSent) return;
+    try {
+      const data = JSON.parse(stdout);
+      res.json(data);
+    } catch {
+      res.status(500).json({ error: 'Falha ao processar resposta do Python.', detalhe: stderr.slice(0, 500), opcoes: [] });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
