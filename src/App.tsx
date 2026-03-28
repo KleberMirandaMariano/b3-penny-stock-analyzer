@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { getStocks, getOptions, getOptionsLive, triggerUpdate, getUpdateStatus, type StocksResponse, type LiveOptionData } from './services/stockService';
+import { getStocks, getOptions, getOptionsLive, analyzeOption, triggerUpdate, getUpdateStatus, type StocksResponse, type LiveOptionData } from './services/stockService';
 import { cn, type StockData, type OptionData } from './utils';
 import {
   TrendingUp,
@@ -872,6 +872,11 @@ function OptionDetailModal({
     });
   }, [opt.tipo, opt.strike, opt.vencimento, stockTicker]);
 
+  // Análise IA
+  const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+
   // Black-Scholes calculations (usa IV do yfinance se disponível, senão calcula)
   const SELIC = 0.1375; // taxa livre de risco Brasil
   const T = daysToExpiry != null ? daysToExpiry / 365 : 0;
@@ -1159,6 +1164,64 @@ function OptionDetailModal({
                   </div>
                 </div>
               </>
+            )}
+          </div>
+          {/* Análise IA */}
+          <div className="bg-gradient-to-br from-violet-50 to-indigo-50 rounded-xl p-4 border border-violet-200/60 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="text-[9px] uppercase font-bold tracking-widest text-violet-700/70 flex items-center gap-1.5">
+                <span>✦</span> Análise IA
+              </div>
+              {!aiAnalysis && !aiLoading && (
+                <button
+                  onClick={() => {
+                    setAiLoading(true);
+                    setAiError(null);
+                    analyzeOption({
+                      opt: { ticker: opt.ticker, tipo: opt.tipo, strike: opt.strike, preco: opt.preco },
+                      stockPrice,
+                      stockTicker,
+                      greeks,
+                      iv,
+                      daysToExpiry,
+                      liveData: liveData ? { bid: liveData.bid, ask: liveData.ask, volume: liveData.volume, openInterest: liveData.openInterest } : null,
+                    }).then((res) => {
+                      if ('analise' in res) setAiAnalysis(res.analise);
+                      else setAiError(res.error);
+                      setAiLoading(false);
+                    }).catch(() => {
+                      setAiError('Não foi possível conectar ao servidor.');
+                      setAiLoading(false);
+                    });
+                  }}
+                  className="text-[10px] font-semibold text-violet-700 bg-white border border-violet-200 rounded-lg px-2.5 py-1 hover:bg-violet-50 transition-colors"
+                >
+                  Analisar
+                </button>
+              )}
+              {aiAnalysis && (
+                <button
+                  onClick={() => setAiAnalysis(null)}
+                  className="text-[10px] text-violet-500/60 hover:text-violet-700 transition-colors"
+                >
+                  Limpar
+                </button>
+              )}
+            </div>
+            {aiLoading && (
+              <div className="flex items-center gap-2 py-2 text-violet-600/60">
+                <RefreshCw className="w-3 h-3 animate-spin" />
+                <span className="text-xs">Gerando análise...</span>
+              </div>
+            )}
+            {aiError && (
+              <p className="text-xs text-rose-600/70">{aiError}</p>
+            )}
+            {aiAnalysis && (
+              <p className="text-xs text-[#141414]/70 leading-relaxed whitespace-pre-wrap">{aiAnalysis}</p>
+            )}
+            {!aiAnalysis && !aiLoading && !aiError && (
+              <p className="text-xs text-violet-600/50">Clique em "Analisar" para gerar uma análise com IA desta opção.</p>
             )}
           </div>
         </div>
