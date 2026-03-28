@@ -206,7 +206,7 @@ app.get('/api/options/:ticker/live', (req: Request, res: Response) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/options/analyze  – Análise IA via Claude
+// POST /api/options/analyze  – Análise IA via Groq
 // ---------------------------------------------------------------------------
 app.post('/api/options/analyze', async (req: Request, res: Response) => {
   const apiKey = process.env.GROQ_API_KEY;

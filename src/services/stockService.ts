@@ -161,7 +161,7 @@ export async function getOptionsLive(ticker: string): Promise<{ opcoes: LiveOpti
 }
 
 // ---------------------------------------------------------------------------
-// Análise IA de uma opção via Claude API (servidor)
+// Análise IA de uma opção via Groq API (servidor)
 // ---------------------------------------------------------------------------
 export async function analyzeOption(payload: {
   opt: { ticker: string; tipo: string; strike: number | null; preco: number | null };
