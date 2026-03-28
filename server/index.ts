@@ -17,6 +17,7 @@ import { exec, spawn, ExecException } from 'child_process';
 import path from 'path';
 import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
+import Groq from 'groq-sdk';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.join(__dirname, '..');
@@ -202,6 +203,66 @@ app.get('/api/options/:ticker/live', (req: Request, res: Response) => {
       res.status(500).json({ error: 'Falha ao processar resposta do Python.', detalhe: stderr.slice(0, 500), opcoes: [] });
     }
   });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/options/analyze  – Análise IA via Groq
+// ---------------------------------------------------------------------------
+app.post('/api/options/analyze', async (req: Request, res: Response) => {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) {
+    res.status(503).json({ error: 'GROQ_API_KEY não configurada no servidor.' });
+    return;
+  }
+
+  const { opt, stockPrice, stockTicker, greeks, iv, daysToExpiry, liveData } = req.body;
+  if (!opt || !stockPrice || !stockTicker) {
+    res.status(400).json({ error: 'Parâmetros insuficientes.' });
+    return;
+  }
+
+  const moneyness = opt.tipo === 'CALL'
+    ? (stockPrice > (opt.strike ?? 0) ? 'ITM' : stockPrice < (opt.strike ?? 0) ? 'OTM' : 'ATM')
+    : (stockPrice < (opt.strike ?? 0) ? 'ITM' : stockPrice > (opt.strike ?? 0) ? 'OTM' : 'ATM');
+
+  const context = [
+    `Ativo subjacente: ${stockTicker} (preço atual: R$ ${Number(stockPrice).toFixed(2)})`,
+    `Opção: ${opt.ticker} — ${opt.tipo} (${opt.tipo === 'CALL' ? 'Direito de Compra' : 'Direito de Venda'})`,
+    `Strike: R$ ${Number(opt.strike).toFixed(2)} | Prêmio: R$ ${Number(opt.preco).toFixed(2)}`,
+    `Status: ${moneyness} (${moneyness === 'ITM' ? 'no dinheiro' : moneyness === 'ATM' ? 'na batida' : 'fora do dinheiro'})`,
+    daysToExpiry != null ? `Dias até vencimento: ${daysToExpiry}` : null,
+    iv != null ? `Volatilidade Implícita: ${(Number(iv) * 100).toFixed(1)}%` : null,
+    greeks ? `Delta: ${Number(greeks.delta).toFixed(4)} | Gamma: ${Number(greeks.gamma).toFixed(4)} | Theta/dia: ${Number(greeks.theta).toFixed(4)} | Vega/1%: ${Number(greeks.vega).toFixed(4)}` : null,
+    liveData?.bid != null ? `Bid: R$ ${Number(liveData.bid).toFixed(2)} | Ask: R$ ${Number(liveData.ask).toFixed(2)}` : null,
+    liveData?.volume != null ? `Volume: ${liveData.volume} | Open Interest: ${liveData.openInterest ?? '—'}` : null,
+  ].filter(Boolean).join('\n');
+
+  try {
+    const client = new Groq({ apiKey });
+    const completion = await client.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: 400,
+      messages: [
+        {
+          role: 'user',
+          content: `Você é um analista de opções da B3. Analise brevemente esta opção com base nos dados abaixo e forneça:
+1. Uma avaliação objetiva do perfil risco/retorno
+2. O que as gregas indicam sobre o comportamento da opção
+3. Um ponto de atenção relevante para o operador
+
+Seja conciso (máximo 4 parágrafos curtos). Use linguagem técnica mas acessível. Não faça recomendação de compra/venda.
+
+Dados:
+${context}`,
+        },
+      ],
+    });
+
+    const text = completion.choices[0]?.message?.content ?? '';
+    res.json({ analise: text });
+  } catch (err: any) {
+    res.status(500).json({ error: `Erro ao chamar Groq API: ${err.message ?? 'desconhecido'}` });
+  }
 });
 
 // ---------------------------------------------------------------------------

@@ -38,6 +38,15 @@ KLBN4,Klabin SA Non-Cum Perp Pfd Registered Shs,"R$ 4,01",,,"17,54","1,71","-35,
 
 // Dados de exemplo para desenvolvimento (serão sobrescritos pela API)
 export const MOCK_OPTIONS_DATA: any = {
+    "CVCB3": [
+        { "ticker": "CVCB3C220", "tipo": "CALL", "strike": 2.20, "preco": 0.38, "vencimento": "2026-04-17" },
+        { "ticker": "CVCB3C244", "tipo": "CALL", "strike": 2.44, "preco": 0.18, "vencimento": "2026-04-17" },
+        { "ticker": "CVCB3C270", "tipo": "CALL", "strike": 2.70, "preco": 0.06, "vencimento": "2026-04-17" },
+        { "ticker": "CVCB3C300", "tipo": "CALL", "strike": 3.00, "preco": 0.02, "vencimento": "2026-04-17" },
+        { "ticker": "CVCB3P220", "tipo": "PUT", "strike": 2.20, "preco": 0.02, "vencimento": "2026-04-17" },
+        { "ticker": "CVCB3P244", "tipo": "PUT", "strike": 2.44, "preco": 0.18, "vencimento": "2026-04-17" },
+        { "ticker": "CVCB3P270", "tipo": "PUT", "strike": 2.70, "preco": 0.44, "vencimento": "2026-04-17" }
+    ],
     "LJQQ3": [
         { "ticker": "LJQQ3C218", "tipo": "CALL", "strike": 2.19, "preco": 0.41, "vencimento": "2026-03-16" },
         { "ticker": "LJQQ3C230", "tipo": "CALL", "strike": 2.31, "preco": 0.25, "vencimento": "2026-03-16" },

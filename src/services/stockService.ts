@@ -161,6 +161,27 @@ export async function getOptionsLive(ticker: string): Promise<{ opcoes: LiveOpti
 }
 
 // ---------------------------------------------------------------------------
+// Análise IA de uma opção via Groq API (servidor)
+// ---------------------------------------------------------------------------
+export async function analyzeOption(payload: {
+  opt: { ticker: string; tipo: string; strike: number | null; preco: number | null };
+  stockPrice: number;
+  stockTicker: string;
+  greeks?: { delta: number; gamma: number; theta: number; vega: number } | null;
+  iv?: number | null;
+  daysToExpiry?: number | null;
+  liveData?: { bid: number | null; ask: number | null; volume: number | null; openInterest: number | null } | null;
+}): Promise<{ analise: string } | { error: string }> {
+  const res = await fetch(`${API_BASE}/api/options/analyze`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(30_000),
+  });
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
 // Consulta o status da atualização em andamento
 // ---------------------------------------------------------------------------
 export async function getUpdateStatus(): Promise<{ updateInProgress: boolean }> {
