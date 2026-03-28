@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --port=3000 --host=0.0.0.0",
+    "dev": "vite",
     "server": "tsx server/index.ts",
     "dev:full": "npm run server & npm run dev",
     "update:stocks": "python scripts/update_stocks.py",
