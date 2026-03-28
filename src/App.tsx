@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { getStocks, getOptions, triggerUpdate, getUpdateStatus, type StocksResponse } from './services/stockService';
+import { getStocks, getOptions, getOptionsLive, triggerUpdate, getUpdateStatus, type StocksResponse, type LiveOptionData } from './services/stockService';
 import { cn, type StockData, type OptionData } from './utils';
 import {
   TrendingUp,
@@ -15,6 +15,10 @@ import {
   Wifi,
   WifiOff,
   AlertTriangle,
+  X,
+  Calendar,
+  Target,
+  Percent,
 } from 'lucide-react';
 import {
   BarChart,
@@ -537,6 +541,7 @@ export default function App() {
                           <ExpandedOptionsRow
                             key={`opts-${stock.ticker}`}
                             ticker={stock.ticker}
+                            stockPrice={stock.preco}
                             opts={optionsCache[stock.ticker]}
                             isLoading={loadingOptions === stock.ticker || !optionsCache[stock.ticker]}
                           />
@@ -620,16 +625,439 @@ function TableHead({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Black-Scholes Greeks
+// ---------------------------------------------------------------------------
+function normCDF(x: number): number {
+  const sign = x < 0 ? -1 : 1;
+  const ax = Math.abs(x) / Math.SQRT2;
+  const t = 1 / (1 + 0.3275911 * ax);
+  const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-ax * ax);
+  return 0.5 * (1 + sign * y);
+}
+
+function normPDF(x: number): number {
+  return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
+}
+
+function bsPrice(tipo: 'CALL' | 'PUT', S: number, K: number, T: number, r: number, sigma: number): number {
+  if (T <= 0) return tipo === 'CALL' ? Math.max(0, S - K) : Math.max(0, K - S);
+  const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
+  const d2 = d1 - sigma * Math.sqrt(T);
+  if (tipo === 'CALL') return S * normCDF(d1) - K * Math.exp(-r * T) * normCDF(d2);
+  return K * Math.exp(-r * T) * normCDF(-d2) - S * normCDF(-d1);
+}
+
+function calcIV(tipo: 'CALL' | 'PUT', S: number, K: number, T: number, r: number, marketPrice: number): number | null {
+  if (T <= 0 || marketPrice <= 0 || S <= 0 || K <= 0) return null;
+  let low = 0.001, high = 10.0;
+  for (let i = 0; i < 100; i++) {
+    const mid = (low + high) / 2;
+    const price = bsPrice(tipo, S, K, T, r, mid);
+    if (Math.abs(price - marketPrice) < 0.00001) return mid;
+    if (price < marketPrice) low = mid;
+    else high = mid;
+  }
+  return (low + high) / 2;
+}
+
+function calcGreeks(tipo: 'CALL' | 'PUT', S: number, K: number, T: number, r: number, sigma: number) {
+  if (T <= 0 || sigma <= 0 || S <= 0 || K <= 0) return null;
+  const sqrtT = Math.sqrt(T);
+  const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT);
+  const d2 = d1 - sigma * sqrtT;
+  const delta = tipo === 'CALL' ? normCDF(d1) : normCDF(d1) - 1;
+  const gamma = normPDF(d1) / (S * sigma * sqrtT);
+  const theta = tipo === 'CALL'
+    ? (-S * normPDF(d1) * sigma / (2 * sqrtT) - r * K * Math.exp(-r * T) * normCDF(d2)) / 365
+    : (-S * normPDF(d1) * sigma / (2 * sqrtT) + r * K * Math.exp(-r * T) * normCDF(-d2)) / 365;
+  const vega = S * normPDF(d1) * sqrtT / 100;
+  return { delta, gamma, theta, vega };
+}
+
+// ---------------------------------------------------------------------------
+// Moneyness helpers
+// ---------------------------------------------------------------------------
+function getMoneyStatus(tipo: 'CALL' | 'PUT', strike: number | null, stockPrice: number): 'ITM' | 'ATM' | 'OTM' {
+  if (!strike || !stockPrice) return 'OTM';
+  const pctDiff = Math.abs(strike - stockPrice) / stockPrice;
+  if (pctDiff <= 0.02) return 'ATM';
+  if (tipo === 'CALL') return strike <= stockPrice ? 'ITM' : 'OTM';
+  return strike >= stockPrice ? 'ITM' : 'OTM';
+}
+
+function MoneyBadge({ status }: { status: 'ITM' | 'ATM' | 'OTM' }) {
+  const styles = {
+    ITM: 'bg-emerald-500/10 text-emerald-700 border-emerald-500/20',
+    ATM: 'bg-amber-500/10 text-amber-700 border-amber-500/20',
+    OTM: 'bg-[#141414]/5 text-[#141414]/50 border-[#141414]/10',
+  };
+  return (
+    <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border tracking-wider ${styles[status]}`}>
+      {status}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Option Detail Modal
+// ---------------------------------------------------------------------------
+function OptionDetailModal({
+  opt,
+  stockPrice,
+  stockTicker,
+  onClose,
+}: {
+  opt: OptionData;
+  stockPrice: number;
+  stockTicker: string;
+  onClose: () => void;
+}) {
+  const status = getMoneyStatus(opt.tipo, opt.strike, stockPrice);
+  const daysToExpiry = opt.vencimento
+    ? Math.max(0, Math.ceil((new Date(opt.vencimento + 'T12:00:00Z').getTime() - Date.now()) / 86400000))
+    : null;
+  const intrinsic = opt.strike != null
+    ? Math.max(0, opt.tipo === 'CALL' ? stockPrice - opt.strike : opt.strike - stockPrice)
+    : null;
+  const timeValue = opt.preco != null && intrinsic != null ? Math.max(0, opt.preco - intrinsic) : null;
+  const moneynessPct = opt.strike ? ((stockPrice - opt.strike) / opt.strike) * 100 : null;
+
+  // Dados ao vivo (bid/ask via yfinance)
+  const [liveData, setLiveData] = useState<LiveOptionData | null>(null);
+  const [liveLoading, setLiveLoading] = useState(true);
+  const [liveAviso, setLiveAviso] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLiveLoading(true);
+    setLiveData(null);
+    getOptionsLive(stockTicker).then(({ opcoes, aviso }) => {
+      // Tenta casar por strike + tipo + vencimento (yfinance usa formato diferente de ticker)
+      const match = opcoes.find(
+        (o) => o.tipo === opt.tipo && o.strike === opt.strike && o.vencimento === opt.vencimento
+      ) ?? null;
+      setLiveData(match);
+      setLiveAviso(aviso ?? (opcoes.length === 0 ? 'Dados ao vivo indisponíveis no Yahoo Finance para este ticker.' : null));
+      setLiveLoading(false);
+    });
+  }, [opt.tipo, opt.strike, opt.vencimento, stockTicker]);
+
+  // Black-Scholes calculations (usa IV do yfinance se disponível, senão calcula)
+  const SELIC = 0.1375; // taxa livre de risco Brasil
+  const T = daysToExpiry != null ? daysToExpiry / 365 : 0;
+  const ivYf = liveData?.impliedVolatility ?? null;
+  const ivBs = opt.preco != null && opt.strike != null
+    ? calcIV(opt.tipo, stockPrice, opt.strike, T, SELIC, opt.preco)
+    : null;
+  const iv = ivYf ?? ivBs;
+  const greeks = iv != null && opt.strike != null
+    ? calcGreeks(opt.tipo, stockPrice, opt.strike, T, SELIC, iv)
+    : null;
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/20 backdrop-blur-[2px]" onClick={onClose} />
+      <motion.div
+        initial={{ x: '100%' }}
+        animate={{ x: 0 }}
+        exit={{ x: '100%' }}
+        transition={{ type: 'spring', damping: 28, stiffness: 220 }}
+        className="fixed top-0 right-0 z-50 w-full max-w-sm h-full bg-white shadow-2xl flex flex-col overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="border-b border-[#141414]/5 p-5 flex items-start justify-between">
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2.5">
+              <span className="font-mono font-bold text-xl tracking-tight">{opt.ticker}</span>
+              <MoneyBadge status={status} />
+            </div>
+            <div className="flex items-center gap-2">
+              {opt.tipo === 'CALL' ? (
+                <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
+              ) : (
+                <TrendingDown className="w-3.5 h-3.5 text-rose-500" />
+              )}
+              <span className={`text-xs font-semibold ${opt.tipo === 'CALL' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                Opção {opt.tipo} · {opt.tipo === 'CALL' ? 'Direito de Compra' : 'Direito de Venda'}
+              </span>
+              <span className="text-[10px] text-[#141414]/30 font-mono">({stockTicker})</span>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg hover:bg-[#F5F5F4] transition-colors text-[#141414]/40 hover:text-[#141414]"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {/* Key metrics */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-[#FBFBFA] rounded-xl p-4 border border-[#141414]/5">
+              <div className="text-[9px] uppercase font-bold text-[#141414]/40 tracking-widest mb-1.5 flex items-center gap-1">
+                <DollarSign className="w-3 h-3" /> Prêmio
+              </div>
+              <div className={`font-mono font-bold text-2xl ${opt.tipo === 'CALL' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                R$ {opt.preco?.toFixed(2) ?? '-'}
+              </div>
+            </div>
+            <div className="bg-[#FBFBFA] rounded-xl p-4 border border-[#141414]/5">
+              <div className="text-[9px] uppercase font-bold text-[#141414]/40 tracking-widest mb-1.5 flex items-center gap-1">
+                <Target className="w-3 h-3" /> Strike
+              </div>
+              <div className="font-mono font-bold text-2xl">R$ {opt.strike?.toFixed(2) ?? '-'}</div>
+            </div>
+          </div>
+
+          {/* Situação */}
+          <div className="bg-[#FBFBFA] rounded-xl p-4 border border-[#141414]/5 space-y-3">
+            <div className="text-[9px] uppercase font-bold text-[#141414]/40 tracking-widest">Situação no Mercado</div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-[#141414]/60">Preço do ativo ({stockTicker})</span>
+              <span className="font-mono font-bold text-sm">R$ {stockPrice.toFixed(2)}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-[#141414]/60">Status</span>
+              <div className="flex items-center gap-2">
+                <MoneyBadge status={status} />
+                <span className="text-xs text-[#141414]/40">
+                  {status === 'ITM' ? '(no dinheiro)' : status === 'ATM' ? '(na batida)' : '(fora do dinheiro)'}
+                </span>
+              </div>
+            </div>
+            {moneynessPct !== null && (
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-[#141414]/60 flex items-center gap-1">
+                  <Percent className="w-3 h-3" /> Distância do strike
+                </span>
+                <span className={`font-mono text-sm font-bold ${moneynessPct > 0 ? 'text-emerald-600' : moneynessPct < 0 ? 'text-rose-600' : 'text-[#141414]/40'}`}>
+                  {moneynessPct > 0 ? '+' : ''}{moneynessPct.toFixed(2)}%
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Decomposição do prêmio */}
+          {opt.preco != null && intrinsic !== null && timeValue !== null && (
+            <div className="bg-[#FBFBFA] rounded-xl p-4 border border-[#141414]/5 space-y-3">
+              <div className="text-[9px] uppercase font-bold text-[#141414]/40 tracking-widest">Decomposição do Prêmio</div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-[#141414]/60">Valor Intrínseco</span>
+                <span className="font-mono text-sm font-bold text-emerald-600">R$ {intrinsic.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-[#141414]/60">Valor do Tempo</span>
+                <span className="font-mono text-sm font-bold text-blue-600">R$ {timeValue.toFixed(2)}</span>
+              </div>
+              {opt.preco > 0 && (
+                <div className="space-y-1.5">
+                  <div className="h-1.5 bg-[#141414]/5 rounded-full overflow-hidden flex">
+                    <div
+                      className="h-full bg-emerald-500 rounded-full transition-all"
+                      style={{ width: `${Math.min(100, (intrinsic / opt.preco) * 100)}%` }}
+                    />
+                    <div
+                      className="h-full bg-blue-400 rounded-full transition-all"
+                      style={{ width: `${Math.min(100, (timeValue / opt.preco) * 100)}%` }}
+                    />
+                  </div>
+                  <div className="flex justify-between text-[9px] text-[#141414]/40">
+                    <span className="text-emerald-600">■ Intrínseco {((intrinsic / opt.preco) * 100).toFixed(0)}%</span>
+                    <span className="text-blue-500">■ Tempo {((timeValue / opt.preco) * 100).toFixed(0)}%</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Vencimento */}
+          <div className="bg-[#FBFBFA] rounded-xl p-4 border border-[#141414]/5 space-y-3">
+            <div className="text-[9px] uppercase font-bold text-[#141414]/40 tracking-widest flex items-center gap-1">
+              <Calendar className="w-3 h-3" /> Vencimento
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-[#141414]/60">Data de vencimento</span>
+              <span className="font-mono text-sm font-bold">
+                {opt.vencimento ? new Date(opt.vencimento + 'T12:00:00Z').toLocaleDateString('pt-BR') : '-'}
+              </span>
+            </div>
+            {daysToExpiry !== null && (
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-[#141414]/60">Dias até vencimento</span>
+                <span className={`font-mono text-sm font-bold ${daysToExpiry <= 7 ? 'text-rose-600' : daysToExpiry <= 30 ? 'text-amber-600' : 'text-[#141414]'}`}>
+                  {daysToExpiry} dias
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Gregas */}
+          {greeks && iv != null ? (
+            <div className="bg-[#FBFBFA] rounded-xl p-4 border border-[#141414]/5 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="text-[9px] uppercase font-bold text-[#141414]/40 tracking-widest">Gregas (Black-Scholes)</div>
+                <span className="text-[9px] font-mono text-[#141414]/30">IV {(iv * 100).toFixed(1)}%</span>
+              </div>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-[#141414]/50">Δ Delta</span>
+                  <span className={`font-mono text-xs font-bold ${greeks.delta > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                    {greeks.delta.toFixed(4)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-[#141414]/50">Γ Gamma</span>
+                  <span className="font-mono text-xs font-bold text-blue-600">
+                    {greeks.gamma.toFixed(4)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-[#141414]/50">Θ Theta/dia</span>
+                  <span className="font-mono text-xs font-bold text-rose-600">
+                    {greeks.theta.toFixed(4)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-[#141414]/50">V Vega/1%</span>
+                  <span className="font-mono text-xs font-bold text-purple-600">
+                    {greeks.vega.toFixed(4)}
+                  </span>
+                </div>
+              </div>
+              <div className="pt-1 border-t border-[#141414]/5">
+                <div className="text-[9px] text-[#141414]/30 leading-relaxed">
+                  Calculadas com Black-Scholes · Taxa SELIC {(SELIC * 100).toFixed(2)}% · Baseado no último preço de fechamento
+                </div>
+              </div>
+            </div>
+          ) : T > 0 && opt.preco != null ? (
+            <div className="bg-[#FBFBFA] rounded-xl p-4 border border-[#141414]/5">
+              <div className="text-[9px] uppercase font-bold text-[#141414]/40 tracking-widest mb-2">Gregas</div>
+              <p className="text-xs text-[#141414]/40">Não foi possível calcular a volatilidade implícita para esta opção.</p>
+            </div>
+          ) : null}
+
+          {/* Bid / Ask ao vivo */}
+          <div className={`rounded-xl p-4 border space-y-3 ${liveData ? 'bg-[#FBFBFA] border-[#141414]/5' : 'bg-amber-50 border-amber-200/60'}`}>
+            <div className="flex items-center justify-between">
+              <div className={`text-[9px] uppercase font-bold tracking-widest ${liveData ? 'text-[#141414]/40' : 'text-amber-700/70'}`}>
+                Ofertas (Yahoo Finance)
+              </div>
+              {liveLoading ? (
+                <RefreshCw className="w-3 h-3 animate-spin text-[#141414]/30" />
+              ) : liveData ? (
+                <span className="text-[9px] font-mono text-[#141414]/30">~15 min delay</span>
+              ) : null}
+            </div>
+
+            {liveLoading ? (
+              <div className="flex items-center gap-2 py-2 text-[#141414]/40">
+                <RefreshCw className="w-3 h-3 animate-spin" />
+                <span className="text-xs">Buscando dados ao vivo...</span>
+              </div>
+            ) : liveData ? (
+              <>
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 text-center bg-white rounded-lg p-3 border border-[#141414]/5">
+                    <div className="text-[9px] text-[#141414]/40 font-bold uppercase mb-1">Bid</div>
+                    <div className="font-mono text-base font-bold text-emerald-600">
+                      {liveData.bid != null ? `R$ ${liveData.bid.toFixed(2)}` : 'N/D'}
+                    </div>
+                  </div>
+                  <div className="flex-1 text-center bg-white rounded-lg p-3 border border-[#141414]/5">
+                    <div className="text-[9px] text-[#141414]/40 font-bold uppercase mb-1">Ask</div>
+                    <div className="font-mono text-base font-bold text-rose-600">
+                      {liveData.ask != null ? `R$ ${liveData.ask.toFixed(2)}` : 'N/D'}
+                    </div>
+                  </div>
+                  <div className="flex-1 text-center bg-white rounded-lg p-3 border border-[#141414]/5">
+                    <div className="text-[9px] text-[#141414]/40 font-bold uppercase mb-1">Último</div>
+                    <div className={`font-mono text-base font-bold ${opt.tipo === 'CALL' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      R$ {(liveData.preco ?? opt.preco)?.toFixed(2) ?? '-'}
+                    </div>
+                  </div>
+                </div>
+                {(liveData.bid != null && liveData.ask != null) && (
+                  <div className="flex items-center justify-between text-xs text-[#141414]/50">
+                    <span>Spread</span>
+                    <span className="font-mono font-bold">
+                      R$ {(liveData.ask - liveData.bid).toFixed(2)}
+                      {' '}
+                      ({liveData.bid > 0 ? (((liveData.ask - liveData.bid) / liveData.bid) * 100).toFixed(1) : '—'}%)
+                    </span>
+                  </div>
+                )}
+                {(liveData.volume != null || liveData.openInterest != null) && (
+                  <div className="grid grid-cols-2 gap-2 pt-1 border-t border-[#141414]/5">
+                    {liveData.volume != null && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-[#141414]/50">Volume</span>
+                        <span className="font-mono text-xs font-bold">{liveData.volume.toLocaleString('pt-BR')}</span>
+                      </div>
+                    )}
+                    {liveData.openInterest != null && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-[#141414]/50">Open Interest</span>
+                        <span className="font-mono text-xs font-bold">{liveData.openInterest.toLocaleString('pt-BR')}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-amber-700/60 leading-relaxed">
+                  {liveAviso ?? 'Yahoo Finance não possui dados ao vivo para este contrato. O COTAHIST B3 registra apenas o preço de fechamento.'}
+                </p>
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 text-center bg-white rounded-lg p-2 border border-amber-200/40">
+                    <div className="text-[9px] text-amber-600/60 font-bold uppercase">Bid</div>
+                    <div className="font-mono text-sm text-amber-700/40">N/D</div>
+                  </div>
+                  <div className="flex-1 text-center bg-white rounded-lg p-2 border border-amber-200/40">
+                    <div className="text-[9px] text-amber-600/60 font-bold uppercase">Ask</div>
+                    <div className="font-mono text-sm text-amber-700/40">N/D</div>
+                  </div>
+                  <div className="flex-1 text-center bg-white rounded-lg p-2 border border-amber-200/40">
+                    <div className="text-[9px] text-amber-600/60 font-bold uppercase">Último</div>
+                    <div className={`font-mono text-sm font-bold ${opt.tipo === 'CALL' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      R$ {opt.preco?.toFixed(2) ?? '-'}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="border-t border-[#141414]/5 p-4">
+          <p className="text-[9px] uppercase tracking-widest text-[#141414]/30 text-center">
+            Não representa recomendação de investimento
+          </p>
+        </div>
+      </motion.div>
+    </>
+  );
+}
+
 function ExpandedOptionsRow({
   ticker,
+  stockPrice,
   isLoading,
   opts,
 }: {
   key?: string;
   ticker: string;
+  stockPrice: number;
   isLoading: boolean;
   opts: OptionData[] | undefined;
 }) {
+  const [selectedOption, setSelectedOption] = useState<OptionData | null>(null);
+
   const vencimentos = useMemo(() => {
     if (!opts) return [];
     const v = new Set(opts.map((o) => o.vencimento));
@@ -723,8 +1151,17 @@ function ExpandedOptionsRow({
                     </thead>
                     <tbody>
                       {calls.map((opt) => (
-                        <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0 hover:bg-[#F5F5F4]/50 transition-colors">
-                          <td className="px-4 py-2 font-mono font-bold">{opt.ticker}</td>
+                        <tr
+                          key={opt.ticker}
+                          className="border-b border-[#141414]/5 last:border-0 hover:bg-[#F5F5F4]/50 transition-colors cursor-pointer"
+                          onClick={() => setSelectedOption(opt)}
+                        >
+                          <td className="px-4 py-2">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono font-bold hover:text-emerald-600 transition-colors">{opt.ticker}</span>
+                              <MoneyBadge status={getMoneyStatus('CALL', opt.strike, stockPrice)} />
+                            </div>
+                          </td>
                           <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
                           <td className="px-4 py-2 font-mono text-right text-emerald-600 font-bold">
                             R$ {opt.preco?.toFixed(2)}
@@ -769,8 +1206,17 @@ function ExpandedOptionsRow({
                     </thead>
                     <tbody>
                       {puts.map((opt) => (
-                        <tr key={opt.ticker} className="border-b border-[#141414]/5 last:border-0 hover:bg-[#F5F5F4]/50 transition-colors">
-                          <td className="px-4 py-2 font-mono font-bold">{opt.ticker}</td>
+                        <tr
+                          key={opt.ticker}
+                          className="border-b border-[#141414]/5 last:border-0 hover:bg-[#F5F5F4]/50 transition-colors cursor-pointer"
+                          onClick={() => setSelectedOption(opt)}
+                        >
+                          <td className="px-4 py-2">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono font-bold hover:text-rose-600 transition-colors">{opt.ticker}</span>
+                              <MoneyBadge status={getMoneyStatus('PUT', opt.strike, stockPrice)} />
+                            </div>
+                          </td>
                           <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
                           <td className="px-4 py-2 font-mono text-right text-rose-600 font-bold">
                             R$ {opt.preco?.toFixed(2)}
@@ -792,6 +1238,17 @@ function ExpandedOptionsRow({
           </div>
         )}
       </td>
+
+      <AnimatePresence>
+        {selectedOption && (
+          <OptionDetailModal
+            opt={selectedOption}
+            stockPrice={stockPrice}
+            stockTicker={ticker}
+            onClose={() => setSelectedOption(null)}
+          />
+        )}
+      </AnimatePresence>
     </motion.tr>
   );
 }
