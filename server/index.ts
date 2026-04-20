@@ -17,7 +17,6 @@ import { exec, spawn, ExecException } from 'child_process';
 import path from 'path';
 import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
-import Groq from 'groq-sdk';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.join(__dirname, '..');
@@ -206,14 +205,11 @@ app.get('/api/options/:ticker/live', (req: Request, res: Response) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/options/analyze  – Análise IA via Groq
+// POST /api/options/analyze  – Análise IA via Ollama (Llama)
 // ---------------------------------------------------------------------------
 app.post('/api/options/analyze', async (req: Request, res: Response) => {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) {
-    res.status(503).json({ error: 'GROQ_API_KEY não configurada no servidor.' });
-    return;
-  }
+  const ollamaUrl = process.env.OLLAMA_URL ?? 'http://localhost:11434';
+  const ollamaModel = process.env.OLLAMA_MODEL ?? 'llama2';
 
   const { opt, stockPrice, stockTicker, greeks, iv, daysToExpiry, liveData } = req.body;
   if (!opt || !stockPrice || !stockTicker) {
@@ -237,15 +233,7 @@ app.post('/api/options/analyze', async (req: Request, res: Response) => {
     liveData?.volume != null ? `Volume: ${liveData.volume} | Open Interest: ${liveData.openInterest ?? '—'}` : null,
   ].filter(Boolean).join('\n');
 
-  try {
-    const client = new Groq({ apiKey });
-    const completion = await client.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      max_tokens: 400,
-      messages: [
-        {
-          role: 'user',
-          content: `Você é um analista de opções da B3. Analise brevemente esta opção com base nos dados abaixo e forneça:
+  const userPrompt = `Você é um analista de opções da B3. Analise brevemente esta opção com base nos dados abaixo e forneça:
 1. Uma avaliação objetiva do perfil risco/retorno
 2. O que as gregas indicam sobre o comportamento da opção
 3. Um ponto de atenção relevante para o operador
@@ -253,15 +241,30 @@ app.post('/api/options/analyze', async (req: Request, res: Response) => {
 Seja conciso (máximo 4 parágrafos curtos). Use linguagem técnica mas acessível. Não faça recomendação de compra/venda.
 
 Dados:
-${context}`,
-        },
-      ],
+${context}`;
+
+  try {
+    const response = await fetch(`${ollamaUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: ollamaModel,
+        messages: [{ role: 'user', content: userPrompt }],
+        stream: false,
+      }),
     });
 
-    const text = completion.choices[0]?.message?.content ?? '';
+    if (!response.ok) {
+      throw new Error(`Ollama retornou ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    const text = data.message?.content ?? '';
     res.json({ analise: text });
   } catch (err: any) {
-    res.status(500).json({ error: `Erro ao chamar Groq API: ${err.message ?? 'desconhecido'}` });
+    res.status(500).json({
+      error: `Erro ao chamar Ollama (${process.env.OLLAMA_URL ?? 'localhost:11434'}): ${err.message ?? 'desconhecido'}`,
+    });
   }
 });
 
