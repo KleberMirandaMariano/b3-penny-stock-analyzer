@@ -252,6 +252,7 @@ ${context}`;
         messages: [{ role: 'user', content: userPrompt }],
         stream: false,
       }),
+      signal: AbortSignal.timeout(60_000), // 60 segundos para dar tempo do Ollama processar
     });
 
     if (!response.ok) {
@@ -262,8 +263,10 @@ ${context}`;
     const text = data.message?.content ?? '';
     res.json({ analise: text });
   } catch (err: any) {
+    console.error('[analyze] Erro:', err.message);
+    const errorMsg = err.message ?? 'desconhecido';
     res.status(500).json({
-      error: `Erro ao chamar Ollama (${process.env.OLLAMA_URL ?? 'localhost:11434'}): ${err.message ?? 'desconhecido'}`,
+      error: `Erro ao conectar ao Ollama em ${ollamaUrl}: ${errorMsg}. Verifique se a VPS está ativa.`,
     });
   }
 });
