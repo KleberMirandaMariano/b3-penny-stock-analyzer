@@ -176,7 +176,7 @@ export async function analyzeOption(payload: {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(70_000), // Aumentado de 30s para 70s (backend espera 60s)
   });
   return res.json();
 }
