@@ -8,7 +8,8 @@
       "Bash(curl:*)",
       "Bash(npm list *)",
       "Bash(npm install *)",
-      "Bash(npx tsx *)"
+      "Bash(npx tsx *)",
+      "Bash(npm run *)"
     ]
   }
 }
