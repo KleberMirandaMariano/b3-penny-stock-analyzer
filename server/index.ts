@@ -65,6 +65,7 @@ async function initializeAnalysisQueue() {
       redis: {
         host: process.env.REDIS_HOST || 'localhost',
         port: Number(process.env.REDIS_PORT || 6379),
+        maxRetriesPerRequest: null,  // Evita "Reached the max retries per request limit (which is 20)"
       },
       defaultJobOptions: {
         attempts: 2,                    // 2 tentativas
