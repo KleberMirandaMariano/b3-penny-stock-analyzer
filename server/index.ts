@@ -37,6 +37,10 @@ const COTAHIST_FILE = path.join(DATA_DIR, 'cotahist.json');
 const app = express();
 const PORT = Number(process.env.PORT ?? 3001);
 
+// Configurar Trust Proxy para Render (e outros reverse proxies)
+// Isso permite que o rate limiter identifique corretamente o IP do cliente
+app.set('trust proxy', 1);
+
 // ---------------------------------------------------------------------------
 // PROBLEMA 2 & 3: Rate Limiting + Bull Queue para análises
 // ---------------------------------------------------------------------------
@@ -61,10 +65,16 @@ let analysisQueue: Queue.Queue<any> | null = null;
 async function initializeAnalysisQueue() {
   try {
     // Tenta conectar ao Redis
+    // NOTA: Render free tier NÃO fornece Redis. Use bull-board para Render pro+.
+    // Para agora, este é apenas um fallback opcional. Se falhar, usa análise direta.
+    const redisHost = process.env.REDIS_HOST || 'localhost';
+    const redisPort = Number(process.env.REDIS_PORT || 6379);
+
     analysisQueue = new Queue('option-analysis', {
       redis: {
-        host: process.env.REDIS_HOST || 'localhost',
-        port: Number(process.env.REDIS_PORT || 6379),
+        host: redisHost,
+        port: redisPort,
+        maxRetriesPerRequest: null, // Evita "Reached the max retries per request limit"
       },
       defaultJobOptions: {
         attempts: 2,                    // 2 tentativas
