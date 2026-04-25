@@ -119,12 +119,12 @@ Seja conciso (máximo 4 parágrafos curtos). Use linguagem técnica mas acessív
 Dados:
 ${context}`;
 
-      const response = await fetch(`${ollamaUrl}/api/chat`, {
+      const response = await fetch(`${ollamaUrl}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: ollamaModel,
-          messages: [{ role: 'user', content: userPrompt }],
+          prompt: userPrompt,
           stream: false,
         }),
         signal: AbortSignal.timeout(60_000),
@@ -135,7 +135,7 @@ ${context}`;
       }
 
       const data = await response.json();
-      const text = data.message?.content ?? '';
+      const text = data.response ?? '';
       return { analise: text };
     });
 
