@@ -7,7 +7,7 @@
  *   GET  /api/stocks          – Retorna public/stocks.json
  *   POST /api/update          – Dispara python3 scripts/update_stocks.py
  *   GET  /api/status          – Metadados sobre os dados (fonte, data, total)
- *   POST /api/options/analyze – Análise IA via Ollama (com rate limiting + fila)
+ *   POST /api/options/analyze – Análise IA via OpenRouter (com rate limiting + fila)
  *
  * Em produção também serve o build do React (dist/).
  * Em desenvolvimento o Vite proxia /api → porta 3001.
@@ -16,6 +16,7 @@
  *   - PROBLEMA 1: Timeout frontend sincronizado (70s alinhado com backend 60s)
  *   - PROBLEMA 2: Rate limiting (30 req/15min por IP) no /api/options/analyze
  *   - PROBLEMA 3: Fila de análises (Bull Queue + Redis) para processar sequencial
+ *   - OpenRouter API integration para análise com modelos de qualidade superior
  */
 
 import express, { Request, Response, NextFunction } from 'express';
@@ -89,7 +90,7 @@ async function initializeAnalysisQueue() {
 
     // Processa análises: 1 por vez (concurrency: 1)
     analysisQueue.process(1, async (job) => {
-      const { payload, ollamaUrl, ollamaModel } = job.data;
+      const { payload } = job.data;
 
       const { opt, stockPrice, stockTicker, greeks, iv, daysToExpiry, liveData } = payload;
 
@@ -119,23 +120,35 @@ Seja conciso (máximo 4 parágrafos curtos). Use linguagem técnica mas acessív
 Dados:
 ${context}`;
 
-      const response = await fetch(`${ollamaUrl}/api/generate`, {
+      const openrouterApiKey = process.env.OPENROUTER_API_KEY;
+      if (!openrouterApiKey) {
+        throw new Error('OPENROUTER_API_KEY não configurada');
+      }
+
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${openrouterApiKey}`,
+          'HTTP-Referer': 'https://b3-penny-stock-analyzer.vercel.app',
+          'X-Title': 'B3 Penny Stock Analyzer',
+        },
         body: JSON.stringify({
-          model: ollamaModel,
-          prompt: userPrompt,
-          stream: false,
+          model: 'meta-llama/llama-2-70b-chat',
+          messages: [{ role: 'user', content: userPrompt }],
+          temperature: 0.7,
+          max_tokens: 1000,
         }),
         signal: AbortSignal.timeout(60_000),
       });
 
       if (!response.ok) {
-        throw new Error(`Ollama retornou ${response.status}: ${response.statusText}`);
+        const errData = await response.text();
+        throw new Error(`OpenRouter retornou ${response.status}: ${errData}`);
       }
 
       const data = await response.json();
-      const text = data.response ?? '';
+      const text = data.choices?.[0]?.message?.content ?? '';
       return { analise: text };
     });
 
@@ -326,14 +339,11 @@ app.get('/api/options/:ticker/live', (req: Request, res: Response) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/options/analyze – Análise IA via Ollama (com Rate Limit + Fila)
+// POST /api/options/analyze – Análise IA via OpenRouter (com Rate Limit + Fila)
 // ✨ PROBLEMA 2: Rate limiting (30 req/15min)
 // ✨ PROBLEMA 3: Fila Bull Queue (1 por vez)
 // ---------------------------------------------------------------------------
 app.post('/api/options/analyze', analyzeRateLimiter, async (req: Request, res: Response) => {
-  const ollamaUrl = process.env.OLLAMA_URL ?? 'http://localhost:11434';
-  const ollamaModel = process.env.OLLAMA_MODEL ?? 'llama2';
-
   const { opt, stockPrice, stockTicker, greeks, iv, daysToExpiry, liveData } = req.body;
   if (!opt || !stockPrice || !stockTicker) {
     res.status(400).json({ error: 'Parâmetros insuficientes.' });
@@ -344,7 +354,7 @@ app.post('/api/options/analyze', analyzeRateLimiter, async (req: Request, res: R
   if (analysisQueue) {
     try {
       const job = await analysisQueue.add(
-        { payload: req.body, ollamaUrl, ollamaModel },
+        { payload: req.body },
         {
           priority: 5, // Jobs com análise menos urgentes
           timeout: 65_000, // 65s timeout no worker
@@ -397,29 +407,41 @@ Dados:
 ${context}`;
 
   try {
-    const response = await fetch(`${ollamaUrl}/api/chat`, {
+    const openrouterApiKey = process.env.OPENROUTER_API_KEY;
+    if (!openrouterApiKey) {
+      throw new Error('OPENROUTER_API_KEY não configurada');
+    }
+
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${openrouterApiKey}`,
+        'HTTP-Referer': 'https://b3-penny-stock-analyzer.vercel.app',
+        'X-Title': 'B3 Penny Stock Analyzer',
+      },
       body: JSON.stringify({
-        model: ollamaModel,
+        model: 'meta-llama/llama-2-70b-chat',
         messages: [{ role: 'user', content: userPrompt }],
-        stream: false,
+        temperature: 0.7,
+        max_tokens: 1000,
       }),
       signal: AbortSignal.timeout(60_000),
     });
 
     if (!response.ok) {
-      throw new Error(`Ollama retornou ${response.status}: ${response.statusText}`);
+      const errData = await response.text();
+      throw new Error(`OpenRouter retornou ${response.status}: ${errData}`);
     }
 
     const data = await response.json();
-    const text = data.message?.content ?? '';
+    const text = data.choices?.[0]?.message?.content ?? '';
     res.json({ analise: text });
   } catch (err: any) {
     console.error('[analyze] Erro:', err.message);
     const errorMsg = err.message ?? 'desconhecido';
     res.status(500).json({
-      error: `Erro ao conectar ao Ollama em ${ollamaUrl}: ${errorMsg}. Verifique se a VPS está ativa.`,
+      error: `Erro ao conectar ao OpenRouter: ${errorMsg}. Verifique se a API key está configurada.`,
     });
   }
 });
