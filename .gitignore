@@ -6,7 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
-!.env.production
 
 # Dados gerados automaticamente (rb3 + yfinance)
 data/
