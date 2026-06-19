@@ -59,8 +59,85 @@ const analyzeRateLimiter = rateLimit({
   },
 });
 
+// Modelo usado para a análise IA via OpenRouter
+const AI_MODEL = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.3-70b-instruct';
+
+// ---------------------------------------------------------------------------
+// Análise IA de uma opção (compartilhada entre a fila e o fallback direto)
+// ---------------------------------------------------------------------------
+interface AnalyzePayload {
+  opt: { ticker: string; tipo: 'CALL' | 'PUT'; strike: number | null; preco: number | null };
+  stockPrice: number;
+  stockTicker: string;
+  greeks?: { delta: number; gamma: number; theta: number; vega: number } | null;
+  iv?: number | null;
+  daysToExpiry?: number | null;
+  liveData?: { bid: number | null; ask: number | null; volume: number | null; openInterest: number | null } | null;
+}
+
+async function analisarOpcao(payload: AnalyzePayload): Promise<{ analise: string }> {
+  const { opt, stockPrice, stockTicker, greeks, iv, daysToExpiry, liveData } = payload;
+
+  const moneyness = opt.tipo === 'CALL'
+    ? (stockPrice > (opt.strike ?? 0) ? 'ITM' : stockPrice < (opt.strike ?? 0) ? 'OTM' : 'ATM')
+    : (stockPrice < (opt.strike ?? 0) ? 'ITM' : stockPrice > (opt.strike ?? 0) ? 'OTM' : 'ATM');
+
+  const context = [
+    `Ativo subjacente: ${stockTicker} (preço atual: R$ ${Number(stockPrice).toFixed(2)})`,
+    `Opção: ${opt.ticker} — ${opt.tipo} (${opt.tipo === 'CALL' ? 'Direito de Compra' : 'Direito de Venda'})`,
+    `Strike: R$ ${Number(opt.strike).toFixed(2)} | Prêmio: R$ ${Number(opt.preco).toFixed(2)}`,
+    `Status: ${moneyness} (${moneyness === 'ITM' ? 'no dinheiro' : moneyness === 'ATM' ? 'na batida' : 'fora do dinheiro'})`,
+    daysToExpiry != null ? `Dias até vencimento: ${daysToExpiry}` : null,
+    iv != null ? `Volatilidade Implícita: ${(Number(iv) * 100).toFixed(1)}%` : null,
+    greeks ? `Delta: ${Number(greeks.delta).toFixed(4)} | Gamma: ${Number(greeks.gamma).toFixed(4)} | Theta/dia: ${Number(greeks.theta).toFixed(4)} | Vega/1%: ${Number(greeks.vega).toFixed(4)}` : null,
+    liveData?.bid != null ? `Bid: R$ ${Number(liveData.bid).toFixed(2)} | Ask: R$ ${Number(liveData.ask).toFixed(2)}` : null,
+    liveData?.volume != null ? `Volume: ${liveData.volume} | Open Interest: ${liveData.openInterest ?? '—'}` : null,
+  ].filter(Boolean).join('\n');
+
+  const userPrompt = `Você é um analista de opções da B3. Analise brevemente esta opção com base nos dados abaixo e forneça:
+1. Uma avaliação objetiva do perfil risco/retorno
+2. O que as gregas indicam sobre o comportamento da opção
+3. Um ponto de atenção relevante para o operador
+
+Seja conciso (máximo 4 parágrafos curtos). Use linguagem técnica mas acessível. Não faça recomendação de compra/venda.
+
+Dados:
+${context}`;
+
+  const openrouterApiKey = process.env.OPENROUTER_API_KEY;
+  if (!openrouterApiKey) {
+    throw new Error('OPENROUTER_API_KEY não configurada');
+  }
+
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${openrouterApiKey}`,
+      'HTTP-Referer': 'https://b3-penny-stock-analyzer.vercel.app',
+      'X-Title': 'B3 Penny Stock Analyzer',
+    },
+    body: JSON.stringify({
+      model: AI_MODEL,
+      messages: [{ role: 'user', content: userPrompt }],
+      temperature: 0.7,
+      max_tokens: 1000,
+    }),
+    signal: AbortSignal.timeout(60_000),
+  });
+
+  if (!response.ok) {
+    const errData = await response.text();
+    throw new Error(`OpenRouter retornou ${response.status}: ${errData}`);
+  }
+
+  const data = await response.json();
+  const text = data.choices?.[0]?.message?.content ?? '';
+  return { analise: text };
+}
+
 // Bull Queue para fila de análises
-// Processa 1 análise por vez para evitar sobrecarga do Ollama
+// Processa 1 análise por vez para evitar sobrecarregar a API de IA
 let analysisQueue: Queue.Queue<any> | null = null;
 
 async function initializeAnalysisQueue() {
@@ -90,66 +167,7 @@ async function initializeAnalysisQueue() {
 
     // Processa análises: 1 por vez (concurrency: 1)
     analysisQueue.process(1, async (job) => {
-      const { payload } = job.data;
-
-      const { opt, stockPrice, stockTicker, greeks, iv, daysToExpiry, liveData } = payload;
-
-      const moneyness = opt.tipo === 'CALL'
-        ? (stockPrice > (opt.strike ?? 0) ? 'ITM' : stockPrice < (opt.strike ?? 0) ? 'OTM' : 'ATM')
-        : (stockPrice < (opt.strike ?? 0) ? 'ITM' : stockPrice > (opt.strike ?? 0) ? 'OTM' : 'ATM');
-
-      const context = [
-        `Ativo subjacente: ${stockTicker} (preço atual: R$ ${Number(stockPrice).toFixed(2)})`,
-        `Opção: ${opt.ticker} — ${opt.tipo} (${opt.tipo === 'CALL' ? 'Direito de Compra' : 'Direito de Venda'})`,
-        `Strike: R$ ${Number(opt.strike).toFixed(2)} | Prêmio: R$ ${Number(opt.preco).toFixed(2)}`,
-        `Status: ${moneyness} (${moneyness === 'ITM' ? 'no dinheiro' : moneyness === 'ATM' ? 'na batida' : 'fora do dinheiro'})`,
-        daysToExpiry != null ? `Dias até vencimento: ${daysToExpiry}` : null,
-        iv != null ? `Volatilidade Implícita: ${(Number(iv) * 100).toFixed(1)}%` : null,
-        greeks ? `Delta: ${Number(greeks.delta).toFixed(4)} | Gamma: ${Number(greeks.gamma).toFixed(4)} | Theta/dia: ${Number(greeks.theta).toFixed(4)} | Vega/1%: ${Number(greeks.vega).toFixed(4)}` : null,
-        liveData?.bid != null ? `Bid: R$ ${Number(liveData.bid).toFixed(2)} | Ask: R$ ${Number(liveData.ask).toFixed(2)}` : null,
-        liveData?.volume != null ? `Volume: ${liveData.volume} | Open Interest: ${liveData.openInterest ?? '—'}` : null,
-      ].filter(Boolean).join('\n');
-
-      const userPrompt = `Você é um analista de opções da B3. Analise brevemente esta opção com base nos dados abaixo e forneça:
-1. Uma avaliação objetiva do perfil risco/retorno
-2. O que as gregas indicam sobre o comportamento da opção
-3. Um ponto de atenção relevante para o operador
-
-Seja conciso (máximo 4 parágrafos curtos). Use linguagem técnica mas acessível. Não faça recomendação de compra/venda.
-
-Dados:
-${context}`;
-
-      const openrouterApiKey = process.env.OPENROUTER_API_KEY;
-      if (!openrouterApiKey) {
-        throw new Error('OPENROUTER_API_KEY não configurada');
-      }
-
-      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${openrouterApiKey}`,
-          'HTTP-Referer': 'https://b3-penny-stock-analyzer.vercel.app',
-          'X-Title': 'B3 Penny Stock Analyzer',
-        },
-        body: JSON.stringify({
-          model: 'meta-llama/llama-2-70b-chat',
-          messages: [{ role: 'user', content: userPrompt }],
-          temperature: 0.7,
-          max_tokens: 1000,
-        }),
-        signal: AbortSignal.timeout(60_000),
-      });
-
-      if (!response.ok) {
-        const errData = await response.text();
-        throw new Error(`OpenRouter retornou ${response.status}: ${errData}`);
-      }
-
-      const data = await response.json();
-      const text = data.choices?.[0]?.message?.content ?? '';
-      return { analise: text };
+      return analisarOpcao(job.data.payload);
     });
 
     console.log('✅ Bull Queue inicializado (conectado ao Redis)');
@@ -344,7 +362,7 @@ app.get('/api/options/:ticker/live', (req: Request, res: Response) => {
 // ✨ PROBLEMA 3: Fila Bull Queue (1 por vez)
 // ---------------------------------------------------------------------------
 app.post('/api/options/analyze', analyzeRateLimiter, async (req: Request, res: Response) => {
-  const { opt, stockPrice, stockTicker, greeks, iv, daysToExpiry, liveData } = req.body;
+  const { opt, stockPrice, stockTicker } = req.body;
   if (!opt || !stockPrice || !stockTicker) {
     res.status(400).json({ error: 'Parâmetros insuficientes.' });
     return;
@@ -380,63 +398,9 @@ app.post('/api/options/analyze', analyzeRateLimiter, async (req: Request, res: R
   }
 
   // Fallback: processa diretamente (sem Redis disponível)
-  const moneyness = opt.tipo === 'CALL'
-    ? (stockPrice > (opt.strike ?? 0) ? 'ITM' : stockPrice < (opt.strike ?? 0) ? 'OTM' : 'ATM')
-    : (stockPrice < (opt.strike ?? 0) ? 'ITM' : stockPrice > (opt.strike ?? 0) ? 'OTM' : 'ATM');
-
-  const context = [
-    `Ativo subjacente: ${stockTicker} (preço atual: R$ ${Number(stockPrice).toFixed(2)})`,
-    `Opção: ${opt.ticker} — ${opt.tipo} (${opt.tipo === 'CALL' ? 'Direito de Compra' : 'Direito de Venda'})`,
-    `Strike: R$ ${Number(opt.strike).toFixed(2)} | Prêmio: R$ ${Number(opt.preco).toFixed(2)}`,
-    `Status: ${moneyness} (${moneyness === 'ITM' ? 'no dinheiro' : moneyness === 'ATM' ? 'na batida' : 'fora do dinheiro'})`,
-    daysToExpiry != null ? `Dias até vencimento: ${daysToExpiry}` : null,
-    iv != null ? `Volatilidade Implícita: ${(Number(iv) * 100).toFixed(1)}%` : null,
-    greeks ? `Delta: ${Number(greeks.delta).toFixed(4)} | Gamma: ${Number(greeks.gamma).toFixed(4)} | Theta/dia: ${Number(greeks.theta).toFixed(4)} | Vega/1%: ${Number(greeks.vega).toFixed(4)}` : null,
-    liveData?.bid != null ? `Bid: R$ ${Number(liveData.bid).toFixed(2)} | Ask: R$ ${Number(liveData.ask).toFixed(2)}` : null,
-    liveData?.volume != null ? `Volume: ${liveData.volume} | Open Interest: ${liveData.openInterest ?? '—'}` : null,
-  ].filter(Boolean).join('\n');
-
-  const userPrompt = `Você é um analista de opções da B3. Analise brevemente esta opção com base nos dados abaixo e forneça:
-1. Uma avaliação objetiva do perfil risco/retorno
-2. O que as gregas indicam sobre o comportamento da opção
-3. Um ponto de atenção relevante para o operador
-
-Seja conciso (máximo 4 parágrafos curtos). Use linguagem técnica mas acessível. Não faça recomendação de compra/venda.
-
-Dados:
-${context}`;
-
   try {
-    const openrouterApiKey = process.env.OPENROUTER_API_KEY;
-    if (!openrouterApiKey) {
-      throw new Error('OPENROUTER_API_KEY não configurada');
-    }
-
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${openrouterApiKey}`,
-        'HTTP-Referer': 'https://b3-penny-stock-analyzer.vercel.app',
-        'X-Title': 'B3 Penny Stock Analyzer',
-      },
-      body: JSON.stringify({
-        model: 'meta-llama/llama-2-70b-chat',
-        messages: [{ role: 'user', content: userPrompt }],
-        temperature: 0.7,
-        max_tokens: 1000,
-      }),
-      signal: AbortSignal.timeout(60_000),
-    });
-
-    if (!response.ok) {
-      const errData = await response.text();
-      throw new Error(`OpenRouter retornou ${response.status}: ${errData}`);
-    }
-
-    const data = await response.json();
-    const text = data.choices?.[0]?.message?.content ?? '';
-    res.json({ analise: text });
+    const result = await analisarOpcao(req.body);
+    res.json(result);
   } catch (err: any) {
     console.error('[analyze] Erro:', err.message);
     const errorMsg = err.message ?? 'desconhecido';
@@ -521,7 +485,7 @@ app.listen(PORT, () => {
   console.log(`   GET  http://localhost:${PORT}/api/status`);
   console.log(`   POST http://localhost:${PORT}/api/options/analyze (com rate limiting + fila)`);
   console.log(`   Auto-update: a cada 30 min (horário de pregão)`);
-  console.log(`   Ollama: ${process.env.OLLAMA_URL || 'http://localhost:11434'}\n`);
+  console.log(`   IA: OpenRouter (${AI_MODEL})\n`);
 
   // Se não há dados (ex: reinício do servidor no Render), dispara update automático
   if (!existsSync(STOCKS_FILE)) {

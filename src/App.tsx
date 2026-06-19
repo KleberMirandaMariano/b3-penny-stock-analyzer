@@ -56,7 +56,7 @@ export default function App() {
 
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: keyof StockData; direction: 'asc' | 'desc' } | null>(
-    { key: 'var1a', direction: 'desc' }
+    { key: 'varDia', direction: 'desc' }
   );
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const [expandedTickers, setExpandedTickers] = useState<Set<string>>(new Set());

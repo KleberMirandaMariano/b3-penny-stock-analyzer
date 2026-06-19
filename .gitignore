@@ -14,3 +14,7 @@ public/stocks.json
 # Cache Python
 __pycache__/
 *.pyc
+
+# Despejos acidentais de git
+git_log.txt
+git_status.txt
