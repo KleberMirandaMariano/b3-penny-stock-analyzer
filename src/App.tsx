@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { getStocks, getOptions, getOptionsLive, analyzeOption, triggerUpdate, getUpdateStatus, type StocksResponse, type LiveOptionData, type ChainRow } from './services/stockService';
 import { cn, type StockData, type OptionData } from './utils';
 import { calcIV, calcGreeks, bsPrice, normCDF } from './blackScholes';
+import { bayesianUpdate } from './bayesian';
 import {
   TrendingUp,
   TrendingDown,
@@ -833,6 +834,43 @@ function OptionDetailModal({
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
 
+  // Histórico da estratégia (Bayesian) — vitórias/derrotas reais, persistidos por ticker
+  const bayesKey = `bayes:${stockTicker}`;
+  const [wins, setWins] = useState(0);
+  const [losses, setLosses] = useState(0);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(bayesKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        setWins(Number(parsed.wins) || 0);
+        setLosses(Number(parsed.losses) || 0);
+      } else {
+        setWins(0);
+        setLosses(0);
+      }
+    } catch {
+      setWins(0);
+      setLosses(0);
+    }
+  }, [bayesKey]);
+  const saveHistory = (w: number, l: number) => {
+    setWins(w);
+    setLosses(l);
+    try {
+      localStorage.setItem(bayesKey, JSON.stringify({ wins: w, losses: l }));
+    } catch { /* ignora indisponibilidade de localStorage */ }
+  };
+  // Prior Beta(1,1) (uniforme) — só envia Bayesian real se houver histórico informado
+  const bayesian = (wins > 0 || losses > 0)
+    ? (() => { const s = bayesianUpdate(wins, losses, 1, 1); return {
+        wins: s.wins, losses: s.losses,
+        priorAlpha: s.priorAlpha, priorBeta: s.priorBeta,
+        posteriorAlpha: s.posteriorAlpha, posteriorBeta: s.posteriorBeta,
+        winRateMap: s.winRateMap, probOver50: s.probOver50,
+      }; })()
+    : null;
+
   // Black-Scholes calculations (usa IV do yfinance se disponível, senão calcula)
   const SELIC = 0.1375; // taxa livre de risco Brasil
   const T = daysToExpiry != null ? daysToExpiry / 365 : 0;
@@ -1179,6 +1217,7 @@ function OptionDetailModal({
                       vencimento: opt.vencimento,
                       liveData: liveData ? { bid: liveData.bid, ask: liveData.ask, volume: liveData.volume, openInterest: liveData.openInterest } : null,
                       chain: buildAnalysisChain(),
+                      bayesian,
                     }).then((res) => {
                       if ('analise' in res) setAiAnalysis(res.analise);
                       else setAiError(res.error);
@@ -1202,6 +1241,36 @@ function OptionDetailModal({
                 </button>
               )}
             </div>
+            {!aiAnalysis && !aiLoading && (
+              <div className="rounded-lg bg-white/60 border border-violet-200/50 p-2.5 space-y-1.5">
+                <div className="text-[9px] uppercase font-bold tracking-widest text-violet-700/60">
+                  Histórico da estratégia ({stockTicker})
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-1.5 text-[11px] text-[#141414]/60">
+                    Vitórias
+                    <input
+                      type="number" min={0} value={wins}
+                      onChange={(e) => saveHistory(Math.max(0, Math.floor(Number(e.target.value) || 0)), losses)}
+                      className="w-14 px-1.5 py-0.5 rounded border border-violet-200 bg-white text-xs font-mono text-emerald-700 focus:outline-none focus:ring-1 focus:ring-violet-300"
+                    />
+                  </label>
+                  <label className="flex items-center gap-1.5 text-[11px] text-[#141414]/60">
+                    Derrotas
+                    <input
+                      type="number" min={0} value={losses}
+                      onChange={(e) => saveHistory(wins, Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                      className="w-14 px-1.5 py-0.5 rounded border border-violet-200 bg-white text-xs font-mono text-rose-700 focus:outline-none focus:ring-1 focus:ring-violet-300"
+                    />
+                  </label>
+                </div>
+                <p className="text-[10px] text-violet-600/50 leading-snug">
+                  {bayesian
+                    ? `Bayesian usará dados reais (${wins}W/${losses}L). Win rate MAP ${(bayesian.winRateMap * 100).toFixed(1)}%.`
+                    : 'Informe o histórico para a seção Bayesian usar dados reais; vazio = estimativa.'}
+                </p>
+              </div>
+            )}
             {aiLoading && (
               <div className="flex items-center gap-2 py-2 text-violet-600/60">
                 <RefreshCw className="w-3 h-3 animate-spin" />

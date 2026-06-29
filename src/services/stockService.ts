@@ -188,6 +188,16 @@ export async function analyzeOption(payload: {
   liveData?: { bid: number | null; ask: number | null; volume: number | null; openInterest: number | null } | null;
   vencimento?: string | null;
   chain?: ChainRow[] | null;
+  bayesian?: {
+    wins: number;
+    losses: number;
+    priorAlpha: number;
+    priorBeta: number;
+    posteriorAlpha: number;
+    posteriorBeta: number;
+    winRateMap: number;
+    probOver50: number;
+  } | null;
 }): Promise<{ analise: string } | { error: string }> {
   const res = await fetch(`${API_BASE}/api/options/analyze`, {
     method: 'POST',

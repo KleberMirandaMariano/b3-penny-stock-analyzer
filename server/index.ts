@@ -92,10 +92,20 @@ interface AnalyzePayload {
   liveData?: { bid: number | null; ask: number | null; volume: number | null; openInterest: number | null } | null;
   vencimento?: string | null;
   chain?: ChainRow[] | null;
+  bayesian?: {
+    wins: number;
+    losses: number;
+    priorAlpha: number;
+    priorBeta: number;
+    posteriorAlpha: number;
+    posteriorBeta: number;
+    winRateMap: number;
+    probOver50: number;
+  } | null;
 }
 
 async function analisarOpcao(payload: AnalyzePayload): Promise<{ analise: string }> {
-  const { opt, stockPrice, stockTicker, greeks, iv, daysToExpiry, liveData, vencimento } = payload;
+  const { opt, stockPrice, stockTicker, greeks, iv, daysToExpiry, liveData, vencimento, bayesian } = payload;
 
   const moneyness = opt.tipo === 'CALL'
     ? (stockPrice > (opt.strike ?? 0) ? 'ITM' : stockPrice < (opt.strike ?? 0) ? 'OTM' : 'ATM')
@@ -132,6 +142,17 @@ async function analisarOpcao(payload: AnalyzePayload): Promise<{ analise: string
 
   const focus = chain.find((r) => r.focus) ?? chain[0];
 
+  // Bloco Bayesian: usa histórico real quando fornecido
+  const temBayesReal = bayesian != null && (bayesian.wins > 0 || bayesian.losses > 0);
+  const bayesBlock = temBayesReal
+    ? [
+        'BAYESIAN (DADOS REAIS — NÃO marcar como estimativa, NÃO recalcular):',
+        `Histórico: ${bayesian!.wins}W / ${bayesian!.losses}L`,
+        `Prior Beta(${bayesian!.priorAlpha}, ${bayesian!.priorBeta}) → Posterior Beta(${bayesian!.posteriorAlpha}, ${bayesian!.posteriorBeta})`,
+        `Win rate MAP: ${pct(bayesian!.winRateMap)} | P(estratégia > 50% de acerto): ${pct(bayesian!.probOver50)}`,
+      ].join('\n')
+    : null;
+
   const context = [
     `Ativo subjacente: ${stockTicker} (preço atual: R$ ${Number(stockPrice).toFixed(2)})`,
     `Tipo: ${opt.tipo} (${opt.tipo === 'CALL' ? 'Direito de Compra' : 'Direito de Venda'})`,
@@ -144,16 +165,28 @@ async function analisarOpcao(payload: AnalyzePayload): Promise<{ analise: string
     focus.volume != null ? `Volume em foco: ${focus.volume} | Open Interest: ${focus.openInterest ?? '—'}` : null,
     '',
     chainTable,
+    bayesBlock ? `\n${bayesBlock}` : null,
   ].filter((l) => l != null).join('\n');
 
   const hoje = new Date().toISOString().slice(0, 10);
+
+  const bayesRule = temBayesReal
+    ? '- A seção "BAYESIAN UPDATE" tem DADOS REAIS (bloco "BAYESIAN (DADOS REAIS...)"): use exatamente os valores fornecidos (histórico, prior/posterior Beta, win rate MAP, P(>50%)). NÃO marque como estimativa, NÃO recalcule. Apenas a seção "IMPACTO NA POSIÇÃO" usa valores ilustrativos marcados com "(est.)".'
+    : '- As seções "IMPACTO NA POSIÇÃO" e "BAYESIAN UPDATE" exigem dados que NÃO foram fornecidos (posição do operador, histórico de trades). Preencha-as com valores ILUSTRATIVOS plausíveis, mas marque cada número estimado com "(est.)" e abra a seção com a linha: "⚠️ Valores ilustrativos — informe sua posição/histórico reais para cálculo exato."';
+
+  const bayesSection = temBayesReal
+    ? `📈 BAYESIAN UPDATE
+Histórico, Prior → Posterior (Beta), win rate MAP e P(estratégia > 50% de acerto) — use EXATAMENTE os valores do bloco "BAYESIAN (DADOS REAIS...)". Comente em 1 frase a confiança na estratégia.`
+    : `📈 BAYESIAN UPDATE (est.)
+⚠️ Valores ilustrativos.
+Prior/Posterior (Beta), win rate MAP e nível de confiança — marcando "(est.)".`;
 
   const userPrompt = `Você é um analista quantitativo de opções da B3. Produza uma análise OPERACIONAL e ACIONÁVEL desta opção, seguindo EXATAMENTE o formato estruturado abaixo (mesmas seções, emojis e ordem). Data de hoje: ${hoje}.
 
 REGRAS DE DADOS (muito importante):
 - Os "dados reais" abaixo (strikes, prêmio/último, bid/ask, volume, open interest, IV, gregas, BS teórico, P(exercício), preço do ativo, dias até vencimento) são fatos já calculados — use-os exatamente como vieram. NÃO recalcule BS teórico nem P(exercício); apenas formate os valores fornecidos (BS teórico em R$, P(exercício) em %).
 - A tabela da seção RECOMENDAÇÃO deve conter TODAS as opções da CADEIA fornecida, uma linha por strike, ordenadas por strike. Marque com ★ a opção em foco (a selecionada pelo usuário).
-- As seções "IMPACTO NA POSIÇÃO" e "BAYESIAN UPDATE" exigem dados que NÃO foram fornecidos (posição do operador, histórico de trades). Preencha-as com valores ILUSTRATIVOS plausíveis, mas marque cada número estimado com "(est.)" e abra a seção com a linha: "⚠️ Valores ilustrativos — informe sua posição/histórico reais para cálculo exato."
+${bayesRule}
 - Para o "ALERTA", cite eventos macro relevantes (ex.: reunião do COPOM) apenas se a data for de seu conhecimento; caso contrário descreva o tipo de risco de evento sem inventar a data exata, marcando "(verificar data)".
 
 FORMATO DE SAÍDA (preencha com os dados fornecidos):
@@ -175,9 +208,7 @@ Tabela: Métrica | Antes | Depois — com prêmios acumulados, custo efetivo/aç
 🚨 ALERTA
 Riscos de evento (macro/COPOM/liquidez/vencimento) e o que monitorar antes do vencimento.
 
-📈 BAYESIAN UPDATE (est.)
-⚠️ Valores ilustrativos.
-Prior/Posterior (Beta), win rate MAP e nível de confiança — marcando "(est.)".
+${bayesSection}
 
 Resumo executivo: 2-3 frases objetivas com a leitura final.
 
