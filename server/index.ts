@@ -60,7 +60,8 @@ const analyzeRateLimiter = rateLimit({
 });
 
 // Modelo usado para a análise IA via OpenRouter
-const AI_MODEL = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.3-70b-instruct';
+// Padrão: melhor modelo gratuito da OpenRouter (alta capacidade de raciocínio)
+const AI_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-oss-120b:free';
 
 // ---------------------------------------------------------------------------
 // Análise IA de uma opção (compartilhada entre a fila e o fallback direto)
