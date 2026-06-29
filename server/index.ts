@@ -60,11 +60,28 @@ const analyzeRateLimiter = rateLimit({
 });
 
 // Modelo usado para a análise IA via OpenRouter
-const AI_MODEL = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.3-70b-instruct';
+// Padrão: melhor modelo gratuito da OpenRouter (alta capacidade de raciocínio)
+const AI_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-oss-120b:free';
 
 // ---------------------------------------------------------------------------
 // Análise IA de uma opção (compartilhada entre a fila e o fallback direto)
 // ---------------------------------------------------------------------------
+// Uma linha da cadeia (strike) já com BS teórico e P(exercício) calculados pelo frontend
+interface ChainRow {
+  ticker: string;
+  strike: number | null;
+  ultimo: number | null;   // último preço / prêmio
+  bid: number | null;
+  ask: number | null;
+  volume: number | null;
+  openInterest: number | null;
+  iv: number | null;        // volatilidade implícita (fração, ex.: 0.45)
+  delta: number | null;
+  bsTeorico: number | null; // preço justo Black-Scholes
+  pExercicio: number | null;// probabilidade de exercício (fração, ex.: 0.435)
+  focus?: boolean;          // opção selecionada pelo usuário
+}
+
 interface AnalyzePayload {
   opt: { ticker: string; tipo: 'CALL' | 'PUT'; strike: number | null; preco: number | null };
   stockPrice: number;
@@ -73,35 +90,131 @@ interface AnalyzePayload {
   iv?: number | null;
   daysToExpiry?: number | null;
   liveData?: { bid: number | null; ask: number | null; volume: number | null; openInterest: number | null } | null;
+  vencimento?: string | null;
+  chain?: ChainRow[] | null;
+  bayesian?: {
+    wins: number;
+    losses: number;
+    priorAlpha: number;
+    priorBeta: number;
+    posteriorAlpha: number;
+    posteriorBeta: number;
+    winRateMap: number;
+    probOver50: number;
+  } | null;
 }
 
 async function analisarOpcao(payload: AnalyzePayload): Promise<{ analise: string }> {
-  const { opt, stockPrice, stockTicker, greeks, iv, daysToExpiry, liveData } = payload;
+  const { opt, stockPrice, stockTicker, greeks, iv, daysToExpiry, liveData, vencimento, bayesian } = payload;
 
   const moneyness = opt.tipo === 'CALL'
     ? (stockPrice > (opt.strike ?? 0) ? 'ITM' : stockPrice < (opt.strike ?? 0) ? 'OTM' : 'ATM')
     : (stockPrice < (opt.strike ?? 0) ? 'ITM' : stockPrice > (opt.strike ?? 0) ? 'OTM' : 'ATM');
 
+  const fmt = (v: number | null | undefined, dec = 2) => (v == null ? '—' : `R$ ${Number(v).toFixed(dec)}`);
+  const pct = (v: number | null | undefined) => (v == null ? '—' : `${(Number(v) * 100).toFixed(1)}%`);
+
+  // Monta a tabela da cadeia (vários strikes). Se nenhuma cadeia veio, usa a própria opção como única linha.
+  const chain: ChainRow[] = (payload.chain && payload.chain.length > 0)
+    ? payload.chain
+    : [{
+        ticker: opt.ticker,
+        strike: opt.strike,
+        ultimo: opt.preco,
+        bid: liveData?.bid ?? null,
+        ask: liveData?.ask ?? null,
+        volume: liveData?.volume ?? null,
+        openInterest: liveData?.openInterest ?? null,
+        iv: iv ?? null,
+        delta: greeks?.delta ?? null,
+        bsTeorico: null,
+        pExercicio: greeks?.delta != null ? Math.abs(greeks.delta) : null,
+        focus: true,
+      }];
+
+  const chainTable = [
+    'CADEIA (vários strikes — use TODOS na tabela RECOMENDAÇÃO, uma linha por strike; não recalcule, use estes valores):',
+    'Opção | Strike | Último | Ask | BS Teórico | P(Exercício)',
+    ...chain.map((r) =>
+      `${r.ticker}${r.focus ? ' ★' : ''} | ${fmt(r.strike)} | ${fmt(r.ultimo)} | ${fmt(r.ask)} | ${fmt(r.bsTeorico)} | ${pct(r.pExercicio)}`
+    ),
+  ].join('\n');
+
+  const focus = chain.find((r) => r.focus) ?? chain[0];
+
+  // Bloco Bayesian: usa histórico real quando fornecido
+  const temBayesReal = bayesian != null && (bayesian.wins > 0 || bayesian.losses > 0);
+  const bayesBlock = temBayesReal
+    ? [
+        'BAYESIAN (DADOS REAIS — NÃO marcar como estimativa, NÃO recalcular):',
+        `Histórico: ${bayesian!.wins}W / ${bayesian!.losses}L`,
+        `Prior Beta(${bayesian!.priorAlpha}, ${bayesian!.priorBeta}) → Posterior Beta(${bayesian!.posteriorAlpha}, ${bayesian!.posteriorBeta})`,
+        `Win rate MAP: ${pct(bayesian!.winRateMap)} | P(estratégia > 50% de acerto): ${pct(bayesian!.probOver50)}`,
+      ].join('\n')
+    : null;
+
   const context = [
     `Ativo subjacente: ${stockTicker} (preço atual: R$ ${Number(stockPrice).toFixed(2)})`,
-    `Opção: ${opt.ticker} — ${opt.tipo} (${opt.tipo === 'CALL' ? 'Direito de Compra' : 'Direito de Venda'})`,
-    `Strike: R$ ${Number(opt.strike).toFixed(2)} | Prêmio: R$ ${Number(opt.preco).toFixed(2)}`,
-    `Status: ${moneyness} (${moneyness === 'ITM' ? 'no dinheiro' : moneyness === 'ATM' ? 'na batida' : 'fora do dinheiro'})`,
+    `Tipo: ${opt.tipo} (${opt.tipo === 'CALL' ? 'Direito de Compra' : 'Direito de Venda'})`,
+    vencimento ? `Vencimento: ${vencimento}` : null,
     daysToExpiry != null ? `Dias até vencimento: ${daysToExpiry}` : null,
-    iv != null ? `Volatilidade Implícita: ${(Number(iv) * 100).toFixed(1)}%` : null,
-    greeks ? `Delta: ${Number(greeks.delta).toFixed(4)} | Gamma: ${Number(greeks.gamma).toFixed(4)} | Theta/dia: ${Number(greeks.theta).toFixed(4)} | Vega/1%: ${Number(greeks.vega).toFixed(4)}` : null,
-    liveData?.bid != null ? `Bid: R$ ${Number(liveData.bid).toFixed(2)} | Ask: R$ ${Number(liveData.ask).toFixed(2)}` : null,
-    liveData?.volume != null ? `Volume: ${liveData.volume} | Open Interest: ${liveData.openInterest ?? '—'}` : null,
-  ].filter(Boolean).join('\n');
+    `Opção em foco (★): ${focus.ticker} — Strike ${fmt(focus.strike)} | Status ${moneyness}`,
+    focus.ask != null ? `Ask em foco: ${fmt(focus.ask)} | Bid: ${fmt(focus.bid)} | BS teórico: ${fmt(focus.bsTeorico)}` : null,
+    focus.iv != null ? `IV em foco: ${pct(focus.iv)}` : null,
+    greeks ? `Gregas em foco — Delta: ${Number(greeks.delta).toFixed(4)} | Gamma: ${Number(greeks.gamma).toFixed(4)} | Theta/dia: ${Number(greeks.theta).toFixed(4)} | Vega/1%: ${Number(greeks.vega).toFixed(4)}` : null,
+    focus.volume != null ? `Volume em foco: ${focus.volume} | Open Interest: ${focus.openInterest ?? '—'}` : null,
+    '',
+    chainTable,
+    bayesBlock ? `\n${bayesBlock}` : null,
+  ].filter((l) => l != null).join('\n');
 
-  const userPrompt = `Você é um analista de opções da B3. Analise brevemente esta opção com base nos dados abaixo e forneça:
-1. Uma avaliação objetiva do perfil risco/retorno
-2. O que as gregas indicam sobre o comportamento da opção
-3. Um ponto de atenção relevante para o operador
+  const hoje = new Date().toISOString().slice(0, 10);
 
-Seja conciso (máximo 4 parágrafos curtos). Use linguagem técnica mas acessível. Não faça recomendação de compra/venda.
+  const bayesRule = temBayesReal
+    ? '- A seção "BAYESIAN UPDATE" tem DADOS REAIS (bloco "BAYESIAN (DADOS REAIS...)"): use exatamente os valores fornecidos (histórico, prior/posterior Beta, win rate MAP, P(>50%)). NÃO marque como estimativa, NÃO recalcule. Apenas a seção "IMPACTO NA POSIÇÃO" usa valores ilustrativos marcados com "(est.)".'
+    : '- As seções "IMPACTO NA POSIÇÃO" e "BAYESIAN UPDATE" exigem dados que NÃO foram fornecidos (posição do operador, histórico de trades). Preencha-as com valores ILUSTRATIVOS plausíveis, mas marque cada número estimado com "(est.)" e abra a seção com a linha: "⚠️ Valores ilustrativos — informe sua posição/histórico reais para cálculo exato."';
 
-Dados:
+  const bayesSection = temBayesReal
+    ? `📈 BAYESIAN UPDATE
+Histórico, Prior → Posterior (Beta), win rate MAP e P(estratégia > 50% de acerto) — use EXATAMENTE os valores do bloco "BAYESIAN (DADOS REAIS...)". Comente em 1 frase a confiança na estratégia.`
+    : `📈 BAYESIAN UPDATE (est.)
+⚠️ Valores ilustrativos.
+Prior/Posterior (Beta), win rate MAP e nível de confiança — marcando "(est.)".`;
+
+  const userPrompt = `Você é um analista quantitativo de opções da B3. Produza uma análise OPERACIONAL e ACIONÁVEL desta opção, seguindo EXATAMENTE o formato estruturado abaixo (mesmas seções, emojis e ordem). Data de hoje: ${hoje}.
+
+REGRAS DE DADOS (muito importante):
+- Os "dados reais" abaixo (strikes, prêmio/último, bid/ask, volume, open interest, IV, gregas, BS teórico, P(exercício), preço do ativo, dias até vencimento) são fatos já calculados — use-os exatamente como vieram. NÃO recalcule BS teórico nem P(exercício); apenas formate os valores fornecidos (BS teórico em R$, P(exercício) em %).
+- A tabela da seção RECOMENDAÇÃO deve conter TODAS as opções da CADEIA fornecida, uma linha por strike, ordenadas por strike. Marque com ★ a opção em foco (a selecionada pelo usuário).
+${bayesRule}
+- Para o "ALERTA", cite eventos macro relevantes (ex.: reunião do COPOM) apenas se a data for de seu conhecimento; caso contrário descreva o tipo de risco de evento sem inventar a data exata, marcando "(verificar data)".
+
+FORMATO DE SAÍDA (preencha com os dados fornecidos):
+
+DADOS REAIS CONFIRMADOS — [série/vencimento]
+[TICKER ATIVO]: R$[preço] | Vencimento: [data]
+
+🎯 RECOMENDAÇÃO
+Tabela com colunas: Opção | Strike | Último | Ask | BS Teórico | P(Exercício)
+(uma linha para CADA strike da cadeia fornecida; ★ na opção em foco). Após a tabela, em 1-2 frases, aponte qual strike oferece o melhor risco/retorno e por quê.
+
+📋 ORDEM
+Bloco para a opção em foco (★): tipo de ordem sugerida (venda/compra a limite conforme o perfil), Strike, Vencimento, Preço/ação (use o Ask real), Total estimado (× lote), e um "Destaque" comparando o Ask real com o BS teórico (acima/abaixo do valor justo).
+
+📊 IMPACTO NA POSIÇÃO (est.)
+⚠️ Valores ilustrativos — informe sua posição/histórico reais para cálculo exato.
+Tabela: Métrica | Antes | Depois — com prêmios acumulados, custo efetivo/ação, break-even e P&L MtM (todos marcados "(est.)").
+
+🚨 ALERTA
+Riscos de evento (macro/COPOM/liquidez/vencimento) e o que monitorar antes do vencimento.
+
+${bayesSection}
+
+Resumo executivo: 2-3 frases objetivas com a leitura final.
+
+Use linguagem técnica e direta, em português. Não invente dados de mercado: só os campos de posição/histórico podem ser estimados, e sempre marcados.
+
+DADOS REAIS:
 ${context}`;
 
   const openrouterApiKey = process.env.OPENROUTER_API_KEY;
@@ -120,8 +233,8 @@ ${context}`;
     body: JSON.stringify({
       model: AI_MODEL,
       messages: [{ role: 'user', content: userPrompt }],
-      temperature: 0.7,
-      max_tokens: 1000,
+      temperature: 0.5,
+      max_tokens: 2200,
     }),
     signal: AbortSignal.timeout(60_000),
   });
