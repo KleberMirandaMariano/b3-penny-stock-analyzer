@@ -95,14 +95,45 @@ async function analisarOpcao(payload: AnalyzePayload): Promise<{ analise: string
     liveData?.volume != null ? `Volume: ${liveData.volume} | Open Interest: ${liveData.openInterest ?? '—'}` : null,
   ].filter(Boolean).join('\n');
 
-  const userPrompt = `Você é um analista de opções da B3. Analise brevemente esta opção com base nos dados abaixo e forneça:
-1. Uma avaliação objetiva do perfil risco/retorno
-2. O que as gregas indicam sobre o comportamento da opção
-3. Um ponto de atenção relevante para o operador
+  const hoje = new Date().toISOString().slice(0, 10);
 
-Seja conciso (máximo 4 parágrafos curtos). Use linguagem técnica mas acessível. Não faça recomendação de compra/venda.
+  const userPrompt = `Você é um analista quantitativo de opções da B3. Produza uma análise OPERACIONAL e ACIONÁVEL desta opção, seguindo EXATAMENTE o formato estruturado abaixo (mesmas seções, emojis e ordem). Data de hoje: ${hoje}.
 
-Dados:
+REGRAS DE DADOS (muito importante):
+- Os "dados reais" abaixo (strike, prêmio/último, bid/ask, volume, open interest, IV, gregas, preço do ativo, dias até vencimento) são fatos de mercado — use-os exatamente como vieram.
+- Calcule o "BS Teórico" pelo modelo Black-Scholes a partir dos dados reais (preço do ativo, strike, dias até vencimento, IV, Selic ~10,75% a.a.).
+- Estime "P(Exercício)" a partir do delta (para CALL, P(exercício) ≈ delta; para PUT, ≈ |delta|). Se não houver delta, estime por Black-Scholes.
+- As seções "IMPACTO NA POSIÇÃO" e "BAYESIAN UPDATE" exigem dados que NÃO foram fornecidos (posição do operador, histórico de trades). Preencha-as com valores ILUSTRATIVOS plausíveis, mas marque cada número estimado com "(est.)" e abra a seção com a linha: "⚠️ Valores ilustrativos — informe sua posição/histórico reais para cálculo exato."
+- Para o "ALERTA", cite eventos macro relevantes (ex.: reunião do COPOM) apenas se a data for de seu conhecimento; caso contrário descreva o tipo de risco de evento sem inventar a data exata, marcando "(verificar data)".
+
+FORMATO DE SAÍDA (preencha com os dados desta opção):
+
+DADOS REAIS CONFIRMADOS — [série/vencimento]
+[TICKER ATIVO]: R$[preço] | Vencimento: [data]
+
+🎯 RECOMENDAÇÃO
+Tabela com colunas: Opção | Strike | Último | Ask | BS Teórico | P(Exercício)
+(apenas a opção analisada)
+
+📋 ORDEM
+Bloco com: tipo de ordem sugerida (venda/compra a limite conforme o perfil), Strike, Vencimento, Preço/ação (use o Ask real), Total estimado (× lote), e um "Destaque" comparando o Ask real com o BS teórico (acima/abaixo do valor justo).
+
+📊 IMPACTO NA POSIÇÃO (est.)
+⚠️ Valores ilustrativos — informe sua posição/histórico reais para cálculo exato.
+Tabela: Métrica | Antes | Depois — com prêmios acumulados, custo efetivo/ação, break-even e P&L MtM (todos marcados "(est.)").
+
+🚨 ALERTA
+Riscos de evento (macro/COPOM/liquidez/vencimento) e o que monitorar antes do vencimento.
+
+📈 BAYESIAN UPDATE (est.)
+⚠️ Valores ilustrativos.
+Prior/Posterior (Beta), win rate MAP e nível de confiança — marcando "(est.)".
+
+Resumo executivo: 2-3 frases objetivas com a leitura final.
+
+Use linguagem técnica e direta, em português. Não invente dados de mercado: só os campos de posição/histórico podem ser estimados, e sempre marcados.
+
+DADOS REAIS:
 ${context}`;
 
   const openrouterApiKey = process.env.OPENROUTER_API_KEY;
@@ -121,8 +152,8 @@ ${context}`;
     body: JSON.stringify({
       model: AI_MODEL,
       messages: [{ role: 'user', content: userPrompt }],
-      temperature: 0.7,
-      max_tokens: 1000,
+      temperature: 0.5,
+      max_tokens: 2200,
     }),
     signal: AbortSignal.timeout(60_000),
   });
