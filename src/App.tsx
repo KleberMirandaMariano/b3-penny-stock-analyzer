@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { getStocks, getOptions, getOptionsLive, analyzeOption, triggerUpdate, getUpdateStatus, type StocksResponse, type LiveOptionData } from './services/stockService';
+import { getStocks, getOptions, getOptionsLive, analyzeOption, triggerUpdate, getUpdateStatus, type StocksResponse, type LiveOptionData, type ChainRow } from './services/stockService';
 import { cn, type StockData, type OptionData } from './utils';
-import { calcIV, calcGreeks } from './blackScholes';
+import { calcIV, calcGreeks, bsPrice, normCDF } from './blackScholes';
 import {
   TrendingUp,
   TrendingDown,
@@ -806,17 +806,22 @@ function OptionDetailModal({
 
   // Dados ao vivo (bid/ask via yfinance)
   const [liveData, setLiveData] = useState<LiveOptionData | null>(null);
+  const [liveChain, setLiveChain] = useState<LiveOptionData[]>([]);
   const [liveLoading, setLiveLoading] = useState(true);
   const [liveAviso, setLiveAviso] = useState<string | null>(null);
 
   useEffect(() => {
     setLiveLoading(true);
     setLiveData(null);
+    setLiveChain([]);
     getOptionsLive(stockTicker).then(({ opcoes, aviso }) => {
+      // Cadeia: todas as opções do mesmo tipo e vencimento, ordenadas por strike
+      const chain = opcoes
+        .filter((o) => o.tipo === opt.tipo && o.vencimento === opt.vencimento)
+        .sort((a, b) => (a.strike ?? 0) - (b.strike ?? 0));
+      setLiveChain(chain);
       // Tenta casar por strike + tipo + vencimento (yfinance usa formato diferente de ticker)
-      const match = opcoes.find(
-        (o) => o.tipo === opt.tipo && o.strike === opt.strike && o.vencimento === opt.vencimento
-      ) ?? null;
+      const match = chain.find((o) => o.strike === opt.strike) ?? null;
       setLiveData(match);
       setLiveAviso(aviso ?? (opcoes.length === 0 ? 'Dados ao vivo indisponíveis no Yahoo Finance para este ticker.' : null));
       setLiveLoading(false);
@@ -839,6 +844,42 @@ function OptionDetailModal({
   const greeks = iv != null && opt.strike != null
     ? calcGreeks(opt.tipo, stockPrice, opt.strike, T, SELIC, iv)
     : null;
+
+  // Probabilidade de exercício (risco-neutro): N(d2) para CALL, N(-d2) para PUT
+  const pExercicio = (K: number, sigma: number): number | null => {
+    if (T <= 0 || sigma <= 0 || stockPrice <= 0 || K <= 0) return null;
+    const d2 = (Math.log(stockPrice / K) + (SELIC - 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
+    return opt.tipo === 'CALL' ? normCDF(d2) : normCDF(-d2);
+  };
+
+  // Monta a cadeia (todos os strikes) com BS teórico e P(exercício) calculados aqui.
+  // Usa os dados ao vivo quando há cadeia; caso contrário, cai para a opção única.
+  const buildAnalysisChain = (): ChainRow[] => {
+    const fonte = liveChain.length > 0
+      ? liveChain
+      : [{ ticker: opt.ticker, tipo: opt.tipo, strike: opt.strike, preco: opt.preco, bid: liveData?.bid ?? null, ask: liveData?.ask ?? null, volume: liveData?.volume ?? null, openInterest: liveData?.openInterest ?? null, impliedVolatility: ivYf, vencimento: opt.vencimento }];
+    return fonte.map((o) => {
+      const K = o.strike;
+      const ivRow = K != null
+        ? (o.impliedVolatility ?? (o.preco != null ? calcIV(opt.tipo, stockPrice, K, T, SELIC, o.preco) : null))
+        : null;
+      const greeksRow = ivRow != null && K != null ? calcGreeks(opt.tipo, stockPrice, K, T, SELIC, ivRow) : null;
+      return {
+        ticker: o.ticker,
+        strike: K,
+        ultimo: o.preco,
+        bid: o.bid,
+        ask: o.ask,
+        volume: o.volume,
+        openInterest: o.openInterest,
+        iv: ivRow,
+        delta: greeksRow?.delta ?? null,
+        bsTeorico: ivRow != null && K != null ? bsPrice(opt.tipo, stockPrice, K, T, SELIC, ivRow) : null,
+        pExercicio: ivRow != null && K != null ? pExercicio(K, ivRow) : null,
+        focus: o.strike === opt.strike,
+      };
+    });
+  };
 
   return (
     <>
@@ -1135,7 +1176,9 @@ function OptionDetailModal({
                       greeks,
                       iv,
                       daysToExpiry,
+                      vencimento: opt.vencimento,
                       liveData: liveData ? { bid: liveData.bid, ask: liveData.ask, volume: liveData.volume, openInterest: liveData.openInterest } : null,
+                      chain: buildAnalysisChain(),
                     }).then((res) => {
                       if ('analise' in res) setAiAnalysis(res.analise);
                       else setAiError(res.error);

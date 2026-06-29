@@ -163,6 +163,21 @@ export async function getOptionsLive(ticker: string): Promise<{ opcoes: LiveOpti
 // ---------------------------------------------------------------------------
 // Análise IA de uma opção via OpenRouter (servidor)
 // ---------------------------------------------------------------------------
+export interface ChainRow {
+  ticker: string;
+  strike: number | null;
+  ultimo: number | null;
+  bid: number | null;
+  ask: number | null;
+  volume: number | null;
+  openInterest: number | null;
+  iv: number | null;
+  delta: number | null;
+  bsTeorico: number | null;
+  pExercicio: number | null;
+  focus?: boolean;
+}
+
 export async function analyzeOption(payload: {
   opt: { ticker: string; tipo: string; strike: number | null; preco: number | null };
   stockPrice: number;
@@ -171,6 +186,8 @@ export async function analyzeOption(payload: {
   iv?: number | null;
   daysToExpiry?: number | null;
   liveData?: { bid: number | null; ask: number | null; volume: number | null; openInterest: number | null } | null;
+  vencimento?: string | null;
+  chain?: ChainRow[] | null;
 }): Promise<{ analise: string } | { error: string }> {
   const res = await fetch(`${API_BASE}/api/options/analyze`, {
     method: 'POST',
