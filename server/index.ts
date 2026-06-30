@@ -63,6 +63,16 @@ const analyzeRateLimiter = rateLimit({
 // Padrão: melhor modelo gratuito da OpenRouter (alta capacidade de raciocínio)
 const AI_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-oss-120b:free';
 
+// Lista de modelos tentados em ordem. Se um id gratuito ficar indisponível
+// (404 "No endpoints found"), tenta o próximo. O modelo configurado vem primeiro.
+const FALLBACK_MODELS = [
+  'openai/gpt-oss-120b:free',
+  'nvidia/nemotron-3-super-120b-a12b:free',
+  'meta-llama/llama-3.3-70b-instruct:free',
+  'google/gemma-2-9b-it:free',
+];
+const AI_MODELS = Array.from(new Set([AI_MODEL, ...FALLBACK_MODELS]));
+
 // ---------------------------------------------------------------------------
 // Análise IA de uma opção (compartilhada entre a fila e o fallback direto)
 // ---------------------------------------------------------------------------
@@ -222,31 +232,56 @@ ${context}`;
     throw new Error('OPENROUTER_API_KEY não configurada');
   }
 
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${openrouterApiKey}`,
-      'HTTP-Referer': 'https://b3-penny-stock-analyzer.vercel.app',
-      'X-Title': 'B3 Penny Stock Analyzer',
-    },
-    body: JSON.stringify({
-      model: AI_MODEL,
-      messages: [{ role: 'user', content: userPrompt }],
-      temperature: 0.5,
-      max_tokens: 2200,
-    }),
-    signal: AbortSignal.timeout(60_000),
-  });
+  let lastErr = '';
+  let dataPolicyHit = false;
 
-  if (!response.ok) {
+  for (const model of AI_MODELS) {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${openrouterApiKey}`,
+        'HTTP-Referer': 'https://b3-penny-stock-analyzer.vercel.app',
+        'X-Title': 'B3 Penny Stock Analyzer',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: userPrompt }],
+        temperature: 0.5,
+        max_tokens: 2200,
+      }),
+      signal: AbortSignal.timeout(60_000),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      const text = data.choices?.[0]?.message?.content ?? '';
+      if (text) return { analise: text };
+      lastErr = `Modelo ${model} retornou resposta vazia.`;
+      continue;
+    }
+
     const errData = await response.text();
-    throw new Error(`OpenRouter retornou ${response.status}: ${errData}`);
+    lastErr = `Modelo ${model} → ${response.status}: ${errData}`;
+    console.error(`[analyze] ${lastErr}`);
+
+    // 404 "No endpoints found ... data policy" = falta habilitar publicação de dados (modelos :free).
+    if (response.status === 404 && /data policy|No endpoints/i.test(errData)) {
+      dataPolicyHit = true;
+    }
+    // 401/403 = chave inválida/sem permissão: não adianta tentar outros modelos.
+    if (response.status === 401 || response.status === 403) break;
+    // Demais erros (404 de modelo, 429, etc.): tenta o próximo modelo da lista.
   }
 
-  const data = await response.json();
-  const text = data.choices?.[0]?.message?.content ?? '';
-  return { analise: text };
+  if (dataPolicyHit) {
+    throw new Error(
+      'Nenhum modelo gratuito disponível: habilite "Free model publication" em ' +
+      'https://openrouter.ai/settings/privacy (necessário para modelos :free) ' +
+      'ou defina OPENROUTER_MODEL para um modelo pago. Detalhe: ' + lastErr,
+    );
+  }
+  throw new Error(`Falha na OpenRouter após tentar ${AI_MODELS.length} modelo(s). ${lastErr}`);
 }
 
 // Bull Queue para fila de análises
