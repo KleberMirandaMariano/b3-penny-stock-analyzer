@@ -197,6 +197,7 @@ export async function analyzeOption(payload: {
     posteriorBeta: number;
     winRateMap: number;
     probOver50: number;
+    sensitivity?: { rho: number; nEff: number; probOver50: number }[];
   } | null;
 }): Promise<{ analise: string } | { error: string }> {
   const res = await fetch(`${API_BASE}/api/options/analyze`, {

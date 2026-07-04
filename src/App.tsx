@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { getStocks, getOptions, getOptionsLive, analyzeOption, triggerUpdate, getUpdateStatus, type StocksResponse, type LiveOptionData, type ChainRow } from './services/stockService';
 import { cn, type StockData, type OptionData } from './utils';
 import { calcIV, calcGreeks, bsPrice, normCDF } from './blackScholes';
-import { bayesianUpdate } from './bayesian';
+import { bayesianUpdate, bayesianSensitivity } from './bayesian';
 import {
   TrendingUp,
   TrendingDown,
@@ -861,13 +861,15 @@ function OptionDetailModal({
       localStorage.setItem(bayesKey, JSON.stringify({ wins: w, losses: l }));
     } catch { /* ignora indisponibilidade de localStorage */ }
   };
-  // Prior Beta(1,1) (uniforme) — só envia Bayesian real se houver histórico informado
+  // Prior Beta(1,1) (uniforme) — só envia Bayesian real se houver histórico informado.
+  // Inclui análise de sensibilidade à correlação entre trades (ρ = 0 / 0,3 / 0,5).
   const bayesian = (wins > 0 || losses > 0)
     ? (() => { const s = bayesianUpdate(wins, losses, 1, 1); return {
         wins: s.wins, losses: s.losses,
         priorAlpha: s.priorAlpha, priorBeta: s.priorBeta,
         posteriorAlpha: s.posteriorAlpha, posteriorBeta: s.posteriorBeta,
         winRateMap: s.winRateMap, probOver50: s.probOver50,
+        sensitivity: bayesianSensitivity(wins, losses, [0, 0.3, 0.5], 1, 1),
       }; })()
     : null;
 
@@ -1269,6 +1271,29 @@ function OptionDetailModal({
                     ? `Bayesian usará dados reais (${wins}W/${losses}L). Win rate MAP ${(bayesian.winRateMap * 100).toFixed(1)}%.`
                     : 'Informe o histórico para a seção Bayesian usar dados reais; vazio = estimativa.'}
                 </p>
+                {bayesian?.sensitivity && (
+                  <div className="pt-1 border-t border-violet-200/40 space-y-1">
+                    <div className="text-[9px] uppercase font-bold tracking-widest text-violet-700/50">
+                      P(acerto &gt; 50%) por correlação (ρ)
+                    </div>
+                    <div className="flex gap-1.5">
+                      {bayesian.sensitivity.map((sc) => (
+                        <div key={sc.rho} className="flex-1 rounded bg-violet-50 border border-violet-200/50 px-1.5 py-1 text-center">
+                          <div className="text-[9px] text-violet-600/50">
+                            ρ={sc.rho.toFixed(1)}{sc.rho === 0 ? ' (indep.)' : ''}
+                          </div>
+                          <div className="text-[11px] font-mono font-bold text-violet-700">
+                            {(sc.probOver50 * 100).toFixed(0)}%
+                          </div>
+                          <div className="text-[8px] text-violet-600/40">n_ef {sc.nEff.toFixed(1)}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-[9px] text-amber-700/70 leading-snug">
+                      ⚠️ Assume trades independentes. Trades no mesmo ticker/regime são correlacionados (ρ&gt;0) → confiança real menor. Win rate ≠ edge: acerto alto não implica expectância positiva.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
             {aiLoading && (

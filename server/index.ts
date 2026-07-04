@@ -111,6 +111,7 @@ interface AnalyzePayload {
     posteriorBeta: number;
     winRateMap: number;
     probOver50: number;
+    sensitivity?: { rho: number; nEff: number; probOver50: number }[];
   } | null;
 }
 
@@ -154,13 +155,19 @@ async function analisarOpcao(payload: AnalyzePayload): Promise<{ analise: string
 
   // Bloco Bayesian: usa histórico real quando fornecido
   const temBayesReal = bayesian != null && (bayesian.wins > 0 || bayesian.losses > 0);
+  const sens = bayesian?.sensitivity ?? [];
   const bayesBlock = temBayesReal
     ? [
         'BAYESIAN (DADOS REAIS — NÃO marcar como estimativa, NÃO recalcular):',
         `Histórico: ${bayesian!.wins}W / ${bayesian!.losses}L`,
         `Prior Beta(${bayesian!.priorAlpha}, ${bayesian!.priorBeta}) → Posterior Beta(${bayesian!.posteriorAlpha}, ${bayesian!.posteriorBeta})`,
-        `Win rate MAP: ${pct(bayesian!.winRateMap)} | P(estratégia > 50% de acerto): ${pct(bayesian!.probOver50)}`,
-      ].join('\n')
+        `Win rate MAP: ${pct(bayesian!.winRateMap)} | P(estratégia > 50% de acerto): ${pct(bayesian!.probOver50)} (assume trades INDEPENDENTES)`,
+        sens.length > 0
+          ? 'Sensibilidade à correlação entre trades — P(acerto > 50%): ' +
+            sens.map((s) => `ρ=${s.rho.toFixed(1)} → ${pct(s.probOver50)} (n_ef ${s.nEff.toFixed(1)})`).join(' | ')
+          : null,
+        'CAVEAT (incluir na seção): o modelo assume trades independentes; trades no mesmo ticker/regime são correlacionados (ρ>0), o que REDUZ a confiança real — use a linha de sensibilidade. Além disso, win rate ≠ edge: taxa de acerto alta (típica de venda OTM) não implica expectância positiva.',
+      ].filter((l) => l != null).join('\n')
     : null;
 
   const context = [
@@ -186,7 +193,7 @@ async function analisarOpcao(payload: AnalyzePayload): Promise<{ analise: string
 
   const bayesSection = temBayesReal
     ? `📈 BAYESIAN UPDATE
-Histórico, Prior → Posterior (Beta), win rate MAP e P(estratégia > 50% de acerto) — use EXATAMENTE os valores do bloco "BAYESIAN (DADOS REAIS...)". Comente em 1 frase a confiança na estratégia.`
+Histórico, Prior → Posterior (Beta), win rate MAP e P(estratégia > 50% de acerto) — use EXATAMENTE os valores do bloco "BAYESIAN (DADOS REAIS...)". Em seguida, mostre a linha de SENSIBILIDADE À CORRELAÇÃO (P(acerto>50%) para ρ=0/0,3/0,5 com n_ef) e, obrigatoriamente, inclua o CAVEAT em 1-2 frases: os valores assumem trades independentes e superestimam a confiança quando os trades são correlacionados (mesmo ticker/regime); e win rate ≠ edge (acerto alto não garante expectância positiva).`
     : `📈 BAYESIAN UPDATE (est.)
 ⚠️ Valores ilustrativos.
 Prior/Posterior (Beta), win rate MAP e nível de confiança — marcando "(est.)".`;
