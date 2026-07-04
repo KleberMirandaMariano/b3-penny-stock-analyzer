@@ -104,3 +104,40 @@ export function bayesianUpdate(
     probOver50,
   };
 }
+
+export interface SensitivityScenario {
+  rho: number;      // correlação assumida entre trades (0 = independentes)
+  nEff: number;     // tamanho amostral efetivo
+  probOver50: number; // P(taxa de acerto > 50%) sob essa correlação
+}
+
+/**
+ * Análise de sensibilidade à correlação entre trades.
+ *
+ * O modelo Beta-Binomial assume trades independentes. Quando os trades são
+ * correlacionados (mesmo ticker, mesmo regime de mercado), o número EFETIVO de
+ * observações é menor: n_eff = n / (1 + (n-1)·ρ). Reduzir n_eff alarga a
+ * posterior e derruba P(acerto > 50%), refletindo a menor confiança real.
+ *
+ * Mantém a mesma taxa de acerto (escala wins/losses pelo fator n_eff/n) e
+ * recomputa P(>50%) para cada ρ fornecido.
+ */
+export function bayesianSensitivity(
+  wins: number,
+  losses: number,
+  rhos: number[] = [0, 0.3, 0.5],
+  priorAlpha = 1,
+  priorBeta = 1,
+): SensitivityScenario[] {
+  const w = Math.max(0, wins);
+  const l = Math.max(0, losses);
+  const n = w + l;
+  return rhos.map((rho) => {
+    const r = Math.min(0.999, Math.max(0, rho));
+    const nEff = n > 0 ? n / (1 + (n - 1) * r) : 0;
+    const scale = n > 0 ? nEff / n : 0;
+    const a = priorAlpha + w * scale;
+    const b = priorBeta + l * scale;
+    return { rho: r, nEff, probOver50: 1 - regularizedIncompleteBeta(0.5, a, b) };
+  });
+}
