@@ -1,11 +1,10 @@
 # Deploy do backend no VPS Hostinger (Docker Manager + Traefik já instalado).
-# O VPS builda a imagem direto do GitHub (branch main).
+# A imagem é buildada pelo GitHub Actions (.github/workflows/docker-backend.yml)
+# e publicada no GHCR; o VPS só faz pull.
 # Variável obrigatória no ambiente do projeto: OPENROUTER_API_KEY
 services:
   api:
-    build:
-      context: https://github.com/KleberMirandaMariano/b3-penny-stock-analyzer.git#main
-    image: b3-penny-api:latest
+    image: ghcr.io/klebermirandamariano/b3-penny-api:latest
     restart: unless-stopped
     depends_on:
       - redis

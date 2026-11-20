@@ -6,16 +6,17 @@
 
 ## Backend no VPS (Docker Manager da Hostinger)
 
-- Compose: [`docker-compose.vps.yml`](docker-compose.vps.yml). O VPS builda a imagem
-  direto da branch `main` do GitHub, usando o [`Dockerfile`](Dockerfile).
+- Compose: [`docker-compose.vps.yml`](docker-compose.vps.yml). A imagem é buildada pelo
+  GitHub Actions ([`docker-backend.yml`](.github/workflows/docker-backend.yml)) a cada push
+  na `main` que mexa no backend, e publicada em `ghcr.io/klebermirandamariano/b3-penny-api`.
 - Serviços: `api` (Express + Python/yfinance) e `redis` (fila Bull das análises IA).
 - TLS: o Traefik do VPS emite o certificado Let's Encrypt para `api.analisekmm.tech`.
 - Dados (`data/`, `public/stocks.json`) ficam em volumes Docker e persistem entre restarts.
 - Variável obrigatória no projeto Docker: `OPENROUTER_API_KEY`.
 - Vercel: `VITE_API_URL=https://api.analisekmm.tech` (faça um redeploy depois de alterar).
 - CORS: `ALLOWED_ORIGIN` aceita várias origens separadas por vírgula.
-- Para atualizar o backend depois de um push na `main`, recrie o projeto no Docker Manager
-  (ou rode `docker compose -f docker-compose.vps.yml up -d --build` no VPS).
+- Para atualizar o backend: depois que o workflow terminar, clique em **Update** no projeto
+  `b3-penny-api` do Docker Manager (faz pull da `latest` e recria o container).
 
 ---
 
