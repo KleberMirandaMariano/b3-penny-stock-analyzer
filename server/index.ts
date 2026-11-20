@@ -555,6 +555,14 @@ app.get('/api/stocks', (req: Request, res: Response) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/me – usuário logado (header injetado pelo traefik-forward-auth)
+// ---------------------------------------------------------------------------
+app.get('/api/me', (req: Request, res: Response) => {
+  const email = req.header('x-forwarded-user') ?? null;
+  res.json({ email, logoutUrl: email ? '/_oauth/logout' : null });
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/status
 // ---------------------------------------------------------------------------
 app.get('/api/status', (req: Request, res: Response) => {

@@ -1,4 +1,4 @@
-name: Backend (GHCR + deploy VPS)
+name: Site (GHCR + deploy VPS)
 
 on:
   push:
@@ -6,6 +6,10 @@ on:
     paths:
       - 'server/**'
       - 'scripts/**'
+      - 'src/**'
+      - 'index.html'
+      - 'vite.config.ts'
+      - 'tsconfig.json'
       - 'package.json'
       - 'package-lock.json'
       - 'requirements.txt'

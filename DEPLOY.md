@@ -1,27 +1,46 @@
-# Deploy: Vercel (frontend) + VPS Hostinger (backend)
+# Deploy: site completo no VPS Hostinger, com login Google
 
-> **Atual (nov/2026):** o backend roda no VPS Hostinger em `https://api.analisekmm.tech`
-> (Docker + Traefik, sem cold start). O frontend fica na Vercel em `https://analisekmm.tech`.
-> As seções sobre Render abaixo ficam como referência histórica.
+> **Atual (nov/2026):** frontend e API rodam juntos no VPS Hostinger em `https://analisekmm.tech`
+> (Docker + Traefik). Todo acesso passa por login Google (traefik-forward-auth) e só os e-mails
+> de `AUTH_WHITELIST` entram. As seções sobre Vercel/Render abaixo ficam como referência histórica.
 
-## Backend no VPS (Docker Manager da Hostinger)
+## Como funciona
 
-- Compose: [`docker-compose.vps.yml`](docker-compose.vps.yml). A imagem é buildada pelo
-  GitHub Actions ([`docker-backend.yml`](.github/workflows/docker-backend.yml)) a cada push
-  na `main` que mexa no backend, e publicada em `ghcr.io/klebermirandamariano/b3-penny-api`.
-- Serviços: `api` (Express + Python/yfinance) e `redis` (fila Bull das análises IA).
-- TLS: o Traefik do VPS emite o certificado Let's Encrypt para `api.analisekmm.tech`.
-- Dados (`data/`, `public/stocks.json`) ficam em volumes Docker e persistem entre restarts.
-- Variável obrigatória no projeto Docker: `OPENROUTER_API_KEY`.
-- Vercel: `VITE_API_URL=https://api.analisekmm.tech` (faça um redeploy depois de alterar).
-- CORS: `ALLOWED_ORIGIN` aceita várias origens separadas por vírgula.
-- Deploy automático: todo push na `main` que mexa no backend (`server/`, `scripts/`,
-  `package*.json`, `requirements.txt`, `Dockerfile`) publica a imagem e chama a API da
-  Hostinger para atualizar o projeto `b3-penny-api` (pull + recreate), seguido de health check.
-  Requer o secret `HOSTINGER_API_TOKEN` no repositório. Também dá para rodar manualmente em
-  Actions → "Backend (GHCR + deploy VPS)" → Run workflow.
-- Variáveis do projeto Docker (ex.: `OPENROUTER_API_KEY`) ficam no Docker Manager e são
-  preservadas pelo update. Não recrie o projeto pelo "create" sem informá-las.
+- Compose: [`docker-compose.vps.yml`](docker-compose.vps.yml), projeto `b3-penny-api` no Docker Manager.
+  - `api`: Express servindo o build do React (`dist/`) e as rotas `/api/*`; scripts Python (yfinance).
+  - `auth`: `thomseddon/traefik-forward-auth:2` (login Google), exposto só em `127.0.0.1:4181`.
+  - `redis`: fila Bull das análises IA.
+- `www.analisekmm.tech` redireciona para `analisekmm.tech`. `/api/status` é público (health check).
+- Sair: `https://analisekmm.tech/_oauth/logout` (botão "Sair" no cabeçalho).
+
+## Variáveis do projeto no Docker Manager
+
+| Variável | Descrição |
+|---|---|
+| `OPENROUTER_API_KEY` | chave da OpenRouter (análise IA) |
+| `OPENROUTER_MODEL` | opcional: modelo fixo, tentado primeiro |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | OAuth client do Google Cloud Console |
+| `AUTH_SECRET` | texto aleatório para assinar o cookie de login |
+| `AUTH_WHITELIST` | e-mails autorizados, separados por vírgula |
+
+Para autorizar ou remover alguém: edite `AUTH_WHITELIST` no Docker Manager e clique em **Update**.
+
+## OAuth client no Google Cloud Console
+
+1. https://console.cloud.google.com → novo projeto (ex.: "Stock Radar BR").
+2. **APIs e serviços → Tela de consentimento OAuth**: tipo *Externo*, nome do app, e-mail de suporte;
+   em **Público-alvo**, publique o app (escopos básicos email/perfil não exigem verificação).
+3. **Credenciais → Criar credenciais → ID do cliente OAuth → Aplicativo da Web**.
+   URI de redirecionamento autorizado: `https://analisekmm.tech/_oauth`
+   (e `https://api.analisekmm.tech/_oauth`, se for acessar por esse host).
+4. Copie o *Client ID* e o *Client secret* para o Docker Manager.
+
+## Deploy automático
+
+Todo push na `main` que mexa no site (`src/`, `server/`, `scripts/`, `index.html`, configs, `Dockerfile`)
+publica a imagem no GHCR e chama a API da Hostinger para atualizar o projeto (pull + recreate),
+com health check em `/api/status`. Requer o secret `HOSTINGER_API_TOKEN` no repositório.
+As variáveis do Docker Manager são preservadas pelo update.
 
 ---
 
