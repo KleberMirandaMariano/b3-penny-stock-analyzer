@@ -341,7 +341,8 @@ initializeAnalysisQueue();
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5173', // Vite dev server
-  process.env.ALLOWED_ORIGIN ?? '',
+  // ALLOWED_ORIGIN aceita várias origens separadas por vírgula
+  ...(process.env.ALLOWED_ORIGIN ?? '').split(',').map((o) => o.trim().replace(/\/$/, '')),
 ].filter(Boolean);
 
 // ---------------------------------------------------------------------------

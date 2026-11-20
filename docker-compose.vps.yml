@@ -1,0 +1,40 @@
+# Deploy do backend no VPS Hostinger (Docker Manager + Traefik já instalado).
+# O VPS builda a imagem direto do GitHub (branch main).
+# Variável obrigatória no ambiente do projeto: OPENROUTER_API_KEY
+services:
+  api:
+    build:
+      context: https://github.com/KleberMirandaMariano/b3-penny-stock-analyzer.git#main
+    image: b3-penny-api:latest
+    restart: unless-stopped
+    depends_on:
+      - redis
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - TZ=America/Sao_Paulo
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - ALLOWED_ORIGIN=https://analisekmm.tech,https://www.analisekmm.tech,https://b3-penny-stock-analyzer.vercel.app
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+    volumes:
+      - b3_data:/app/data
+      - b3_public:/app/public
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.b3-api.rule=Host(`api.analisekmm.tech`)
+      - traefik.http.routers.b3-api.entrypoints=websecure
+      - traefik.http.routers.b3-api.tls.certresolver=letsencrypt
+      - traefik.http.services.b3-api.loadbalancer.server.port=3001
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "no"]
+    volumes:
+      - redis_data:/data
+
+volumes:
+  b3_data:
+  b3_public:
+  redis_data:
