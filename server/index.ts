@@ -59,19 +59,74 @@ const analyzeRateLimiter = rateLimit({
   },
 });
 
-// Modelo usado para a análise IA via OpenRouter
-// Padrão: melhor modelo gratuito da OpenRouter (alta capacidade de raciocínio)
-const AI_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-oss-120b:free';
+// Modelo usado para a análise IA via OpenRouter.
+// OPENROUTER_MODEL (opcional) fixa um modelo, que é sempre tentado primeiro.
+const AI_MODEL_ENV = process.env.OPENROUTER_MODEL?.trim() || null;
 
-// Lista de modelos tentados em ordem. Se um id gratuito ficar indisponível
-// (404 "No endpoints found"), tenta o próximo. O modelo configurado vem primeiro.
-const FALLBACK_MODELS = [
+// Preferência entre os modelos gratuitos, quando estiverem disponíveis.
+// A OpenRouter muda o catálogo :free com frequência, então esta lista é só a ordem
+// de preferência: a lista real vem de GET /api/v1/models (ver getModelCandidates).
+const PREFERRED_FREE_MODELS = [
+  'nvidia/nemotron-3-ultra-550b-a55b:free',
+  'google/gemma-4-31b-it:free',
+  'nvidia/nemotron-3.5-super-vl:free',
+  'google/gemma-4-26b-a4b-it:free',
   'openai/gpt-oss-120b:free',
-  'nvidia/nemotron-3-super-120b-a12b:free',
   'meta-llama/llama-3.3-70b-instruct:free',
-  'google/gemma-2-9b-it:free',
 ];
-const AI_MODELS = Array.from(new Set([AI_MODEL, ...FALLBACK_MODELS]));
+const MAX_MODEL_ATTEMPTS = 4;
+const MIN_CONTEXT = 32_000;
+const MODELS_CACHE_MS = 60 * 60 * 1000; // 1h
+
+let freeModelsCache: { ids: string[]; at: number } | null = null;
+
+/** Lista os modelos gratuitos de texto disponíveis agora na OpenRouter (com cache de 1h). */
+async function fetchFreeModels(): Promise<string[]> {
+  if (freeModelsCache && Date.now() - freeModelsCache.at < MODELS_CACHE_MS) {
+    return freeModelsCache.ids;
+  }
+  try {
+    const r = await fetch('https://openrouter.ai/api/v1/models', { signal: AbortSignal.timeout(10_000) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const body = await r.json();
+    const ids: string[] = (body.data ?? [])
+      .filter((m: any) => {
+        const id = String(m.id ?? '');
+        const free = id.endsWith(':free') ||
+          (Number(m.pricing?.prompt) === 0 && Number(m.pricing?.completion) === 0);
+        const out: string[] = m.architecture?.output_modalities ?? ['text'];
+        const inp: string[] = m.architecture?.input_modalities ?? ['text'];
+        return free && out.includes('text') && inp.includes('text') &&
+          Number(m.context_length ?? 0) >= MIN_CONTEXT;
+      })
+      .map((m: any) => String(m.id));
+    freeModelsCache = { ids, at: Date.now() };
+    console.log(`[models] ${ids.length} modelos gratuitos disponíveis na OpenRouter`);
+    return ids;
+  } catch (err: any) {
+    console.warn('[models] Falha ao listar modelos da OpenRouter:', err.message);
+    return freeModelsCache?.ids ?? [];
+  }
+}
+
+/** Ordem de tentativa: modelo fixado > preferidos disponíveis > demais gratuitos. */
+async function getModelCandidates(): Promise<string[]> {
+  const available = await fetchFreeModels();
+  const preferred = available.length > 0
+    ? PREFERRED_FREE_MODELS.filter((m) => available.includes(m))
+    : PREFERRED_FREE_MODELS; // catálogo indisponível: tenta a lista fixa
+  const ordered = [
+    ...(AI_MODEL_ENV ? [AI_MODEL_ENV] : []),
+    ...preferred,
+    ...available,
+  ];
+  return Array.from(new Set(ordered)).slice(0, MAX_MODEL_ATTEMPTS + (AI_MODEL_ENV ? 1 : 0));
+}
+
+/** Remove um modelo do cache quando a OpenRouter diz que ele não está mais disponível. */
+function forgetModel(id: string) {
+  if (freeModelsCache) freeModelsCache.ids = freeModelsCache.ids.filter((m) => m !== id);
+}
 
 // ---------------------------------------------------------------------------
 // Análise IA de uma opção (compartilhada entre a fila e o fallback direto)
@@ -115,7 +170,7 @@ interface AnalyzePayload {
   } | null;
 }
 
-async function analisarOpcao(payload: AnalyzePayload): Promise<{ analise: string }> {
+async function analisarOpcao(payload: AnalyzePayload): Promise<{ analise: string; modelo?: string }> {
   const { opt, stockPrice, stockTicker, greeks, iv, daysToExpiry, liveData, vencimento, bayesian } = payload;
 
   const moneyness = opt.tipo === 'CALL'
@@ -239,56 +294,79 @@ ${context}`;
     throw new Error('OPENROUTER_API_KEY não configurada');
   }
 
-  let lastErr = '';
-  let dataPolicyHit = false;
+  const models = await getModelCandidates();
+  if (models.length === 0) {
+    throw new Error('Nenhum modelo gratuito disponível na OpenRouter no momento. Defina OPENROUTER_MODEL para um modelo pago.');
+  }
 
-  for (const model of AI_MODELS) {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${openrouterApiKey}`,
-        'HTTP-Referer': 'https://b3-penny-stock-analyzer.vercel.app',
-        'X-Title': 'B3 Penny Stock Analyzer',
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'user', content: userPrompt }],
-        temperature: 0.5,
-        max_tokens: 2200,
-      }),
-      signal: AbortSignal.timeout(60_000),
-    });
+  const errors: string[] = [];
+  let dataPolicyHit = false;
+  const deadline = Date.now() + 60_000; // orçamento total, alinhado ao timeout do frontend
+
+  for (const model of models) {
+    const remaining = deadline - Date.now();
+    if (remaining < 5_000) { errors.push('tempo esgotado'); break; }
+
+    let response: globalThis.Response;
+    try {
+      response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${openrouterApiKey}`,
+          'HTTP-Referer': 'https://analisekmm.tech',
+          'X-Title': 'B3 Penny Stock Analyzer',
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: userPrompt }],
+          temperature: 0.5,
+          max_tokens: 2200,
+        }),
+        signal: AbortSignal.timeout(Math.min(45_000, remaining)),
+      });
+    } catch (err: any) {
+      errors.push(`${model}: ${err.name === 'TimeoutError' ? 'timeout' : err.message}`);
+      console.error(`[analyze] ${model} → ${err.message}`);
+      continue;
+    }
 
     if (response.ok) {
       const data = await response.json();
       const text = data.choices?.[0]?.message?.content ?? '';
-      if (text) return { analise: text };
-      lastErr = `Modelo ${model} retornou resposta vazia.`;
+      if (text) {
+        console.log(`[analyze] OK com ${model}`);
+        return { analise: text, modelo: model };
+      }
+      errors.push(`${model}: resposta vazia`);
       continue;
     }
 
     const errData = await response.text();
-    lastErr = `Modelo ${model} → ${response.status}: ${errData}`;
-    console.error(`[analyze] ${lastErr}`);
+    let msg = errData;
+    try { msg = JSON.parse(errData)?.error?.message ?? errData; } catch { /* texto puro */ }
+    errors.push(`${model} (${response.status}): ${String(msg).slice(0, 160)}`);
+    console.error(`[analyze] ${model} → ${response.status}: ${msg}`);
 
     // 404 "No endpoints found ... data policy" = falta habilitar publicação de dados (modelos :free).
-    if (response.status === 404 && /data policy|No endpoints/i.test(errData)) {
-      dataPolicyHit = true;
-    }
+    if (response.status === 404 && /data policy/i.test(errData)) dataPolicyHit = true;
+    // Modelo saiu do catálogo gratuito: tira do cache para não tentar de novo.
+    if (response.status === 404) forgetModel(model);
     // 401/403 = chave inválida/sem permissão: não adianta tentar outros modelos.
-    if (response.status === 401 || response.status === 403) break;
-    // Demais erros (404 de modelo, 429, etc.): tenta o próximo modelo da lista.
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(`Chave da OpenRouter recusada (${response.status}): ${String(msg).slice(0, 200)}`);
+    }
+    // Demais erros (404, 429, 5xx): tenta o próximo modelo.
   }
 
   if (dataPolicyHit) {
     throw new Error(
       'Nenhum modelo gratuito disponível: habilite "Free model publication" em ' +
       'https://openrouter.ai/settings/privacy (necessário para modelos :free) ' +
-      'ou defina OPENROUTER_MODEL para um modelo pago. Detalhe: ' + lastErr,
+      'ou defina OPENROUTER_MODEL para um modelo pago. Detalhes: ' + errors.join(' | '),
     );
   }
-  throw new Error(`Falha na OpenRouter após tentar ${AI_MODELS.length} modelo(s). ${lastErr}`);
+  throw new Error(`Nenhum modelo da OpenRouter respondeu (${errors.length} tentativa(s)): ${errors.join(' | ')}`);
 }
 
 // Bull Queue para fila de análises
@@ -310,7 +388,7 @@ async function initializeAnalysisQueue() {
         maxRetriesPerRequest: null, // Evita "Reached the max retries per request limit"
       },
       defaultJobOptions: {
-        attempts: 2,                    // 2 tentativas
+        attempts: 1,                    // o fallback entre modelos já acontece dentro de analisarOpcao
         backoff: {
           type: 'exponential',
           delay: 2000,                  // começa com 2s
@@ -526,20 +604,27 @@ app.post('/api/options/analyze', analyzeRateLimiter, async (req: Request, res: R
 
   // Se Bull Queue está disponível, processa via fila
   if (analysisQueue) {
+    let job: Queue.Job<any> | null = null;
     try {
-      const job = await analysisQueue.add(
-        { payload: req.body },
-        {
-          priority: 5, // Jobs com análise menos urgentes
-          timeout: 65_000, // 65s timeout no worker
-        }
-      );
+      // Com o Redis fora do ar, add() fica pendente para sempre: limita a 5s e cai no modo direto
+      job = await Promise.race([
+        analysisQueue.add(
+          { payload: req.body },
+          {
+            priority: 5, // Jobs com análise menos urgentes
+            timeout: 65_000, // 65s timeout no worker
+          }
+        ),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Fila indisponível (Redis sem resposta)')), 5_000)
+        ),
+      ]);
 
-      console.log(`[queue] Job ${job.id} adicionado à fila`);
+      console.log(`[queue] Job ${job!.id} adicionado à fila`);
 
       // Aguarda resultado com timeout
       const result = await Promise.race([
-        job.finished(),
+        job!.finished(),
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error('Job timeout')), 65_000)
         ),
@@ -549,7 +634,14 @@ app.post('/api/options/analyze', analyzeRateLimiter, async (req: Request, res: R
       return;
     } catch (err: any) {
       console.error('[queue] Erro:', err.message);
-      // Fallback: processa diretamente sem fila
+      // Se o job chegou a rodar e falhou, repassa o erro (não repete as chamadas à IA).
+      // Só cai no modo direto quando a própria fila falhou (Redis fora do ar).
+      if (job) {
+        res.status(err.message === 'Job timeout' ? 504 : 502).json({
+          error: `Análise IA indisponível: ${err.message}`,
+        });
+        return;
+      }
     }
   }
 
@@ -561,7 +653,7 @@ app.post('/api/options/analyze', analyzeRateLimiter, async (req: Request, res: R
     console.error('[analyze] Erro:', err.message);
     const errorMsg = err.message ?? 'desconhecido';
     res.status(500).json({
-      error: `Erro ao conectar ao OpenRouter: ${errorMsg}. Verifique se a API key está configurada.`,
+      error: `Análise IA indisponível: ${errorMsg}`,
     });
   }
 });
@@ -641,7 +733,7 @@ app.listen(PORT, () => {
   console.log(`   GET  http://localhost:${PORT}/api/status`);
   console.log(`   POST http://localhost:${PORT}/api/options/analyze (com rate limiting + fila)`);
   console.log(`   Auto-update: a cada 30 min (horário de pregão)`);
-  console.log(`   IA: OpenRouter (${AI_MODEL})\n`);
+  console.log(`   IA: OpenRouter (${AI_MODEL_ENV ?? 'modelos gratuitos detectados automaticamente'})\n`);
 
   // Se não há dados (ex: reinício do servidor no Render), dispara update automático
   if (!existsSync(STOCKS_FILE)) {
