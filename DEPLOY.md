@@ -15,8 +15,13 @@
 - Variável obrigatória no projeto Docker: `OPENROUTER_API_KEY`.
 - Vercel: `VITE_API_URL=https://api.analisekmm.tech` (faça um redeploy depois de alterar).
 - CORS: `ALLOWED_ORIGIN` aceita várias origens separadas por vírgula.
-- Para atualizar o backend: depois que o workflow terminar, clique em **Update** no projeto
-  `b3-penny-api` do Docker Manager (faz pull da `latest` e recria o container).
+- Deploy automático: todo push na `main` que mexa no backend (`server/`, `scripts/`,
+  `package*.json`, `requirements.txt`, `Dockerfile`) publica a imagem e chama a API da
+  Hostinger para atualizar o projeto `b3-penny-api` (pull + recreate), seguido de health check.
+  Requer o secret `HOSTINGER_API_TOKEN` no repositório. Também dá para rodar manualmente em
+  Actions → "Backend (GHCR + deploy VPS)" → Run workflow.
+- Variáveis do projeto Docker (ex.: `OPENROUTER_API_KEY`) ficam no Docker Manager e são
+  preservadas pelo update. Não recrie o projeto pelo "create" sem informá-las.
 
 ---
 
