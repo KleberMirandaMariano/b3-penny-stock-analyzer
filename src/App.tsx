@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { getStocks, getOptions, getOptionsLive, analyzeOption, triggerUpdate, getUpdateStatus, type StocksResponse, type LiveOptionData, type ChainRow, type AnalyzeResult } from './services/stockService';
+import { getStocks, getOptions, getOptionsLive, analyzeOption, triggerUpdate, getUpdateStatus, getMe, type StocksResponse, type LiveOptionData, type ChainRow, type AnalyzeResult } from './services/stockService';
 import { AiAnalysisCard } from './components/AiAnalysisCard';
 import { cn, type StockData, type OptionData } from './utils';
 import { calcIV, calcGreeks, bsPrice, normCDF } from './blackScholes';
@@ -51,6 +51,8 @@ const FIXED_TICKERS = [
 // App
 // ---------------------------------------------------------------------------
 export default function App() {
+  const [me, setMe] = useState<{ email: string | null; logoutUrl: string | null } | null>(null);
+  useEffect(() => { getMe().then(setMe); }, []);
   const [response, setResponse] = useState<StocksResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -368,6 +370,19 @@ export default function App() {
               <p className="text-[10px] uppercase font-bold text-[#141414]/40">Última Atualização</p>
               <p className="text-xs font-mono">{lastUpdate}</p>
             </div>
+
+            {/* Usuário logado + sair */}
+            {me?.email && (
+              <div className="flex items-center gap-2 pl-3 border-l border-[#141414]/10">
+                <span className="hidden md:inline text-[11px] text-[#141414]/50 max-w-[160px] truncate" title={me.email}>{me.email}</span>
+                <a
+                  href={me.logoutUrl ?? '/_oauth/logout'}
+                  className="text-[11px] font-semibold text-[#141414]/60 hover:text-[#141414] border border-[#141414]/10 rounded-full px-3 py-1.5 transition-colors"
+                >
+                  Sair
+                </a>
+              </div>
+            )}
           </div>
         </header>
 

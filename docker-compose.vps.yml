@@ -1,30 +1,73 @@
-# Deploy do backend no VPS Hostinger (Docker Manager + Traefik já instalado).
+# Site completo no VPS Hostinger (Docker Manager + Traefik já instalado).
 # A imagem é buildada pelo GitHub Actions (.github/workflows/docker-backend.yml)
 # e publicada no GHCR; o VPS só faz pull.
-# Variável obrigatória no ambiente do projeto: OPENROUTER_API_KEY
+#
+# Variáveis do projeto no Docker Manager:
+#   OPENROUTER_API_KEY    chave da OpenRouter
+#   GOOGLE_CLIENT_ID      OAuth client (Google Cloud Console)
+#   GOOGLE_CLIENT_SECRET  OAuth client secret
+#   AUTH_SECRET           texto aleatório para assinar o cookie de login
+#   AUTH_WHITELIST        e-mails autorizados, separados por vírgula
 services:
   api:
     image: ghcr.io/klebermirandamariano/b3-penny-api:latest
     restart: unless-stopped
     depends_on:
       - redis
+      - auth
     environment:
       - NODE_ENV=production
       - PORT=3001
       - TZ=America/Sao_Paulo
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - ALLOWED_ORIGIN=https://analisekmm.tech,https://www.analisekmm.tech,https://b3-penny-stock-analyzer.vercel.app
+      - ALLOWED_ORIGIN=https://analisekmm.tech
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
     volumes:
       - b3_data:/app/data
       - b3_public:/app/public
     labels:
       - traefik.enable=true
-      - traefik.http.routers.b3-api.rule=Host(`api.analisekmm.tech`)
-      - traefik.http.routers.b3-api.entrypoints=websecure
-      - traefik.http.routers.b3-api.tls.certresolver=letsencrypt
-      - traefik.http.services.b3-api.loadbalancer.server.port=3001
+      # Site principal, protegido pelo login Google
+      - traefik.http.routers.b3-site.rule=Host(`analisekmm.tech`) || Host(`api.analisekmm.tech`)
+      - traefik.http.routers.b3-site.entrypoints=websecure
+      - traefik.http.routers.b3-site.tls.certresolver=letsencrypt
+      - traefik.http.routers.b3-site.middlewares=b3-google-auth
+      - traefik.http.routers.b3-site.service=b3-site
+      - traefik.http.services.b3-site.loadbalancer.server.port=3001
+      # www -> domínio principal
+      - traefik.http.routers.b3-www.rule=Host(`www.analisekmm.tech`)
+      - traefik.http.routers.b3-www.entrypoints=websecure
+      - traefik.http.routers.b3-www.tls.certresolver=letsencrypt
+      - traefik.http.routers.b3-www.middlewares=b3-www-redirect
+      - traefik.http.routers.b3-www.service=b3-site
+      - traefik.http.middlewares.b3-www-redirect.redirectregex.regex=^https://www\.analisekmm\.tech/(.*)
+      - traefik.http.middlewares.b3-www-redirect.redirectregex.replacement=https://analisekmm.tech/$${1}
+      - traefik.http.middlewares.b3-www-redirect.redirectregex.permanent=true
+      # Middleware de login (serviço "auth" abaixo, publicado só em 127.0.0.1)
+      - traefik.http.middlewares.b3-google-auth.forwardauth.address=http://127.0.0.1:4181
+      - traefik.http.middlewares.b3-google-auth.forwardauth.trustForwardHeader=true
+      - traefik.http.middlewares.b3-google-auth.forwardauth.authResponseHeaders=X-Forwarded-User
+
+  # Login com Google: só e-mails de AUTH_WHITELIST passam.
+  # O Traefik roda em network_mode: host, então fala com este serviço via 127.0.0.1:4181.
+  auth:
+    image: thomseddon/traefik-forward-auth:2
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4181:4181"
+    environment:
+      - DEFAULT_PROVIDER=google
+      - PROVIDERS_GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - PROVIDERS_GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - SECRET=${AUTH_SECRET}
+      - WHITELIST=${AUTH_WHITELIST}
+      - LIFETIME=2592000
+      - LOG_LEVEL=info
+    # Health check público (só status, sem dados) para o deploy automático
+    command:
+      - --rule.health.action=allow
+      - --rule.health.rule=Path(`/api/status`)
 
   redis:
     image: redis:7-alpine

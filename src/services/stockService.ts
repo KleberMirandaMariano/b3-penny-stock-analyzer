@@ -258,3 +258,16 @@ export async function triggerUpdate(ticker?: string): Promise<{ ok: boolean; men
     return { ok: false, mensagem: err?.message };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Usuário logado (login Google no VPS). Fora do VPS (dev) retorna email null.
+// ---------------------------------------------------------------------------
+export async function getMe(): Promise<{ email: string | null; logoutUrl: string | null }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/me`, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return { email: null, logoutUrl: null };
+    return await res.json();
+  } catch {
+    return { email: null, logoutUrl: null };
+  }
+}
