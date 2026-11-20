@@ -178,6 +178,24 @@ export interface ChainRow {
   focus?: boolean;
 }
 
+export interface AnaliseEstruturada {
+  veredito: 'COMPRAR' | 'VENDER' | 'EVITAR' | 'AGUARDAR';
+  confianca: 'BAIXA' | 'MEDIA' | 'ALTA';
+  manchete: string;
+  resumo: string;
+  melhorStrike: string | null;
+  motivoStrike: string | null;
+  aFavor: string[];
+  contra: string[];
+  monitorar: string[];
+}
+
+export interface AnalyzeResult {
+  analise: string;
+  estruturada?: AnaliseEstruturada;
+  modelo?: string;
+}
+
 export async function analyzeOption(payload: {
   opt: { ticker: string; tipo: string; strike: number | null; preco: number | null };
   stockPrice: number;
@@ -199,7 +217,7 @@ export async function analyzeOption(payload: {
     probOver50: number;
     sensitivity?: { rho: number; nEff: number; probOver50: number }[];
   } | null;
-}): Promise<{ analise: string } | { error: string }> {
+}): Promise<AnalyzeResult | { error: string }> {
   const res = await fetch(`${API_BASE}/api/options/analyze`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

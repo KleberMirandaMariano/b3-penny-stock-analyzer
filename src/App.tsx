@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { getStocks, getOptions, getOptionsLive, analyzeOption, triggerUpdate, getUpdateStatus, type StocksResponse, type LiveOptionData, type ChainRow } from './services/stockService';
+import { getStocks, getOptions, getOptionsLive, analyzeOption, triggerUpdate, getUpdateStatus, type StocksResponse, type LiveOptionData, type ChainRow, type AnalyzeResult } from './services/stockService';
+import { AiAnalysisCard } from './components/AiAnalysisCard';
 import { cn, type StockData, type OptionData } from './utils';
 import { calcIV, calcGreeks, bsPrice, normCDF } from './blackScholes';
 import { bayesianUpdate, bayesianSensitivity } from './bayesian';
@@ -830,7 +831,8 @@ function OptionDetailModal({
   }, [opt.tipo, opt.strike, opt.vencimento, stockTicker]);
 
   // Análise IA
-  const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
+  const [aiAnalysis, setAiAnalysis] = useState<AnalyzeResult | null>(null);
+  const [aiChain, setAiChain] = useState<ChainRow[]>([]);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
 
@@ -1209,6 +1211,8 @@ function OptionDetailModal({
                   onClick={() => {
                     setAiLoading(true);
                     setAiError(null);
+                    const chainSnapshot = buildAnalysisChain();
+                    setAiChain(chainSnapshot);
                     analyzeOption({
                       opt: { ticker: opt.ticker, tipo: opt.tipo, strike: opt.strike, preco: opt.preco },
                       stockPrice,
@@ -1218,10 +1222,10 @@ function OptionDetailModal({
                       daysToExpiry,
                       vencimento: opt.vencimento,
                       liveData: liveData ? { bid: liveData.bid, ask: liveData.ask, volume: liveData.volume, openInterest: liveData.openInterest } : null,
-                      chain: buildAnalysisChain(),
+                      chain: chainSnapshot,
                       bayesian,
                     }).then((res) => {
-                      if ('analise' in res) setAiAnalysis(res.analise);
+                      if ('analise' in res) setAiAnalysis(res);
                       else setAiError(res.error);
                       setAiLoading(false);
                     }).catch(() => {
@@ -1306,7 +1310,13 @@ function OptionDetailModal({
               <p className="text-xs text-rose-600/70">{aiError}</p>
             )}
             {aiAnalysis && (
-              <p className="text-xs text-[#141414]/70 leading-relaxed whitespace-pre-wrap">{aiAnalysis}</p>
+              <AiAnalysisCard
+                result={aiAnalysis}
+                chain={aiChain}
+                stockTicker={stockTicker}
+                stockPrice={stockPrice}
+                daysToExpiry={daysToExpiry}
+              />
             )}
             {!aiAnalysis && !aiLoading && !aiError && (
               <p className="text-xs text-violet-600/50">Clique em "Analisar" para gerar uma análise com IA desta opção.</p>

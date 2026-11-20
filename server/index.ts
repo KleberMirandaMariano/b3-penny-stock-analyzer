@@ -170,7 +170,71 @@ interface AnalyzePayload {
   } | null;
 }
 
-async function analisarOpcao(payload: AnalyzePayload): Promise<{ analise: string; modelo?: string }> {
+// ---------------------------------------------------------------------------
+// Análise estruturada (JSON) devolvida pela IA
+// ---------------------------------------------------------------------------
+type Veredito = 'COMPRAR' | 'VENDER' | 'EVITAR' | 'AGUARDAR';
+type Confianca = 'BAIXA' | 'MEDIA' | 'ALTA';
+
+interface AnaliseEstruturada {
+  veredito: Veredito;
+  confianca: Confianca;
+  manchete: string;
+  resumo: string;
+  melhorStrike: string | null;
+  motivoStrike: string | null;
+  aFavor: string[];
+  contra: string[];
+  monitorar: string[];
+}
+
+function parseAnaliseJson(raw: string): AnaliseEstruturada | null {
+  const semCerca = raw.replace(/```(?:json)?/gi, '');
+  const ini = semCerca.indexOf('{');
+  const fim = semCerca.lastIndexOf('}');
+  if (ini < 0 || fim <= ini) return null;
+  let obj: any;
+  try { obj = JSON.parse(semCerca.slice(ini, fim + 1)); } catch { return null; }
+
+  const norm = (v: unknown) => String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim();
+  const veredito = norm(obj.veredito) as Veredito;
+  if (!['COMPRAR', 'VENDER', 'EVITAR', 'AGUARDAR'].includes(veredito)) return null;
+  const c = norm(obj.confianca);
+  const confianca: Confianca = c === 'ALTA' ? 'ALTA' : c === 'BAIXA' ? 'BAIXA' : 'MEDIA';
+  const txt = (v: unknown, max: number) => {
+    const t = typeof v === 'string' ? v.trim() : '';
+    return t && t.toLowerCase() !== 'null' ? t.slice(0, max) : null;
+  };
+  const lista = (v: unknown) =>
+    (Array.isArray(v) ? v : []).map((x) => txt(x, 120)).filter((x): x is string => !!x).slice(0, 3);
+
+  return {
+    veredito,
+    confianca,
+    manchete: txt(obj.manchete, 140) ?? '',
+    resumo: txt(obj.resumo, 400) ?? '',
+    melhorStrike: txt(obj.melhorStrike, 30),
+    motivoStrike: txt(obj.motivoStrike, 200),
+    aFavor: lista(obj.aFavor),
+    contra: lista(obj.contra),
+    monitorar: lista(obj.monitorar),
+  };
+}
+
+/** Versão em texto simples (compatibilidade com clientes antigos). */
+function analiseParaTexto(a: AnaliseEstruturada): string {
+  const bloco = (titulo: string, itens: string[]) => itens.length ? `${titulo}\n${itens.map((i) => `• ${i}`).join('\n')}` : null;
+  return [
+    `${a.veredito} (confiança ${a.confianca.toLowerCase()}) — ${a.manchete}`,
+    a.resumo,
+    a.melhorStrike ? `Melhor strike: ${a.melhorStrike}${a.motivoStrike ? ` — ${a.motivoStrike}` : ''}` : null,
+    bloco('A favor', a.aFavor),
+    bloco('Contra', a.contra),
+    bloco('Monitorar', a.monitorar),
+  ].filter(Boolean).join('\n\n');
+}
+
+async function analisarOpcao(payload: AnalyzePayload): Promise<{ analise: string; estruturada?: AnaliseEstruturada; modelo?: string }> {
   const { opt, stockPrice, stockTicker, greeks, iv, daysToExpiry, liveData, vencimento, bayesian } = payload;
 
   const moneyness = opt.tipo === 'CALL'
@@ -199,7 +263,7 @@ async function analisarOpcao(payload: AnalyzePayload): Promise<{ analise: string
       }];
 
   const chainTable = [
-    'CADEIA (vários strikes — use TODOS na tabela RECOMENDAÇÃO, uma linha por strike; não recalcule, use estes valores):',
+    'CADEIA (mesmo tipo e vencimento; ★ = opção em foco):',
     'Opção | Strike | Último | Ask | BS Teórico | P(Exercício)',
     ...chain.map((r) =>
       `${r.ticker}${r.focus ? ' ★' : ''} | ${fmt(r.strike)} | ${fmt(r.ultimo)} | ${fmt(r.ask)} | ${fmt(r.bsTeorico)} | ${pct(r.pExercicio)}`
@@ -213,7 +277,7 @@ async function analisarOpcao(payload: AnalyzePayload): Promise<{ analise: string
   const sens = bayesian?.sensitivity ?? [];
   const bayesBlock = temBayesReal
     ? [
-        'BAYESIAN (DADOS REAIS — NÃO marcar como estimativa, NÃO recalcular):',
+        'BAYESIAN (histórico real da estratégia):',
         `Histórico: ${bayesian!.wins}W / ${bayesian!.losses}L`,
         `Prior Beta(${bayesian!.priorAlpha}, ${bayesian!.priorBeta}) → Posterior Beta(${bayesian!.posteriorAlpha}, ${bayesian!.posteriorBeta})`,
         `Win rate MAP: ${pct(bayesian!.winRateMap)} | P(estratégia > 50% de acerto): ${pct(bayesian!.probOver50)} (assume trades INDEPENDENTES)`,
@@ -221,7 +285,7 @@ async function analisarOpcao(payload: AnalyzePayload): Promise<{ analise: string
           ? 'Sensibilidade à correlação entre trades — P(acerto > 50%): ' +
             sens.map((s) => `ρ=${s.rho.toFixed(1)} → ${pct(s.probOver50)} (n_ef ${s.nEff.toFixed(1)})`).join(' | ')
           : null,
-        'CAVEAT (incluir na seção): o modelo assume trades independentes; trades no mesmo ticker/regime são correlacionados (ρ>0), o que REDUZ a confiança real — use a linha de sensibilidade. Além disso, win rate ≠ edge: taxa de acerto alta (típica de venda OTM) não implica expectância positiva.',
+        'Obs.: assume trades independentes; com correlação (ρ>0) a confiança real é menor. Win rate ≠ edge.',
       ].filter((l) => l != null).join('\n')
     : null;
 
@@ -242,49 +306,31 @@ async function analisarOpcao(payload: AnalyzePayload): Promise<{ analise: string
 
   const hoje = new Date().toISOString().slice(0, 10);
 
-  const bayesRule = temBayesReal
-    ? '- A seção "BAYESIAN UPDATE" tem DADOS REAIS (bloco "BAYESIAN (DADOS REAIS...)"): use exatamente os valores fornecidos (histórico, prior/posterior Beta, win rate MAP, P(>50%)). NÃO marque como estimativa, NÃO recalcule. Apenas a seção "IMPACTO NA POSIÇÃO" usa valores ilustrativos marcados com "(est.)".'
-    : '- As seções "IMPACTO NA POSIÇÃO" e "BAYESIAN UPDATE" exigem dados que NÃO foram fornecidos (posição do operador, histórico de trades). Preencha-as com valores ILUSTRATIVOS plausíveis, mas marque cada número estimado com "(est.)" e abra a seção com a linha: "⚠️ Valores ilustrativos — informe sua posição/histórico reais para cálculo exato."';
+  // A IA devolve só o julgamento (veredito + motivos) em JSON curto.
+  // Os números (cadeia, BS, P(exercício), Bayes) já vêm calculados e o frontend os exibe direto.
+  const userPrompt = `Você é um analista quantitativo de opções da B3. Data de hoje: ${hoje}.
+Avalie a opção em foco (★) usando SOMENTE os dados abaixo e responda APENAS com um objeto JSON válido, sem markdown, sem texto antes ou depois.
 
-  const bayesSection = temBayesReal
-    ? `📈 BAYESIAN UPDATE
-Histórico, Prior → Posterior (Beta), win rate MAP e P(estratégia > 50% de acerto) — use EXATAMENTE os valores do bloco "BAYESIAN (DADOS REAIS...)". Em seguida, mostre a linha de SENSIBILIDADE À CORRELAÇÃO (P(acerto>50%) para ρ=0/0,3/0,5 com n_ef) e, obrigatoriamente, inclua o CAVEAT em 1-2 frases: os valores assumem trades independentes e superestimam a confiança quando os trades são correlacionados (mesmo ticker/regime); e win rate ≠ edge (acerto alto não garante expectância positiva).`
-    : `📈 BAYESIAN UPDATE (est.)
-⚠️ Valores ilustrativos.
-Prior/Posterior (Beta), win rate MAP e nível de confiança — marcando "(est.)".`;
+Formato exato:
+{
+  "veredito": "COMPRAR" | "VENDER" | "EVITAR" | "AGUARDAR",
+  "confianca": "BAIXA" | "MEDIA" | "ALTA",
+  "manchete": "frase de até 90 caracteres com a leitura principal",
+  "resumo": "no máximo 2 frases objetivas",
+  "melhorStrike": "ticker da cadeia com melhor risco/retorno, ou null",
+  "motivoStrike": "1 frase curta explicando o melhorStrike, ou null",
+  "aFavor": ["até 3 itens curtos (máx. 70 caracteres cada)"],
+  "contra": ["até 3 itens curtos (máx. 70 caracteres cada)"],
+  "monitorar": ["até 3 gatilhos objetivos, ex.: 'COGN3 abaixo de R$ 1,52'"]
+}
 
-  const userPrompt = `Você é um analista quantitativo de opções da B3. Produza uma análise OPERACIONAL e ACIONÁVEL desta opção, seguindo EXATAMENTE o formato estruturado abaixo (mesmas seções, emojis e ordem). Data de hoje: ${hoje}.
-
-REGRAS DE DADOS (muito importante):
-- Os "dados reais" abaixo (strikes, prêmio/último, bid/ask, volume, open interest, IV, gregas, BS teórico, P(exercício), preço do ativo, dias até vencimento) são fatos já calculados — use-os exatamente como vieram. NÃO recalcule BS teórico nem P(exercício); apenas formate os valores fornecidos (BS teórico em R$, P(exercício) em %).
-- A tabela da seção RECOMENDAÇÃO deve conter TODAS as opções da CADEIA fornecida, uma linha por strike, ordenadas por strike. Marque com ★ a opção em foco (a selecionada pelo usuário).
-${bayesRule}
-- Para o "ALERTA", cite eventos macro relevantes (ex.: reunião do COPOM) apenas se a data for de seu conhecimento; caso contrário descreva o tipo de risco de evento sem inventar a data exata, marcando "(verificar data)".
-
-FORMATO DE SAÍDA (preencha com os dados fornecidos):
-
-DADOS REAIS CONFIRMADOS — [série/vencimento]
-[TICKER ATIVO]: R$[preço] | Vencimento: [data]
-
-🎯 RECOMENDAÇÃO
-Tabela com colunas: Opção | Strike | Último | Ask | BS Teórico | P(Exercício)
-(uma linha para CADA strike da cadeia fornecida; ★ na opção em foco). Após a tabela, em 1-2 frases, aponte qual strike oferece o melhor risco/retorno e por quê.
-
-📋 ORDEM
-Bloco para a opção em foco (★): tipo de ordem sugerida (venda/compra a limite conforme o perfil), Strike, Vencimento, Preço/ação (use o Ask real), Total estimado (× lote), e um "Destaque" comparando o Ask real com o BS teórico (acima/abaixo do valor justo).
-
-📊 IMPACTO NA POSIÇÃO (est.)
-⚠️ Valores ilustrativos — informe sua posição/histórico reais para cálculo exato.
-Tabela: Métrica | Antes | Depois — com prêmios acumulados, custo efetivo/ação, break-even e P&L MtM (todos marcados "(est.)").
-
-🚨 ALERTA
-Riscos de evento (macro/COPOM/liquidez/vencimento) e o que monitorar antes do vencimento.
-
-${bayesSection}
-
-Resumo executivo: 2-3 frases objetivas com a leitura final.
-
-Use linguagem técnica e direta, em português. Não invente dados de mercado: só os campos de posição/histórico podem ser estimados, e sempre marcados.
+Regras:
+- "VENDER" = lançar/vender a opção; "COMPRAR" = comprar a opção; "EVITAR" = não operar; "AGUARDAR" = esperar um gatilho.
+- Não invente números de mercado, posição do operador ou histórico de trades. Use apenas os dados fornecidos.
+- Sem Ask/Bid ou com volume baixo, trate liquidez como risco explícito.
+- Eventos macro (ex.: COPOM) só com data se você tiver certeza; senão escreva "(verificar data)".
+${temBayesReal ? '- Há histórico real da estratégia (bloco BAYESIAN): considere-o e lembre que win rate alto não garante expectância positiva.' : ''}
+- Português do Brasil, linguagem direta.
 
 DADOS REAIS:
 ${context}`;
@@ -301,6 +347,7 @@ ${context}`;
 
   const errors: string[] = [];
   let dataPolicyHit = false;
+  let textoBruto: { analise: string; modelo: string } | null = null;
   const deadline = Date.now() + 60_000; // orçamento total, alinhado ao timeout do frontend
 
   for (const model of models) {
@@ -320,8 +367,9 @@ ${context}`;
         body: JSON.stringify({
           model,
           messages: [{ role: 'user', content: userPrompt }],
-          temperature: 0.5,
-          max_tokens: 2200,
+          temperature: 0.3,
+          max_tokens: 900,
+          response_format: { type: 'json_object' },
         }),
         signal: AbortSignal.timeout(Math.min(45_000, remaining)),
       });
@@ -335,8 +383,15 @@ ${context}`;
       const data = await response.json();
       const text = data.choices?.[0]?.message?.content ?? '';
       if (text) {
-        console.log(`[analyze] OK com ${model}`);
-        return { analise: text, modelo: model };
+        const estruturada = parseAnaliseJson(text);
+        if (estruturada) {
+          console.log(`[analyze] OK com ${model}`);
+          return { analise: analiseParaTexto(estruturada), estruturada, modelo: model };
+        }
+        // Modelo não respeitou o JSON: guarda o texto como último recurso e tenta o próximo
+        textoBruto ??= { analise: text, modelo: model };
+        errors.push(`${model}: resposta fora do formato JSON`);
+        continue;
       }
       errors.push(`${model}: resposta vazia`);
       continue;
@@ -358,6 +413,8 @@ ${context}`;
     }
     // Demais erros (404, 429, 5xx): tenta o próximo modelo.
   }
+
+  if (textoBruto) return textoBruto;
 
   if (dataPolicyHit) {
     throw new Error(
