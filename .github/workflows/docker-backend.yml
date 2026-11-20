@@ -1,4 +1,4 @@
-name: Backend image (GHCR)
+name: Backend (GHCR + deploy VPS)
 
 on:
   push:
@@ -17,6 +17,15 @@ on:
 permissions:
   contents: read
   packages: write
+
+env:
+  VPS_ID: '1514218'
+  DOCKER_PROJECT: b3-penny-api
+  HEALTH_URL: https://api.analisekmm.tech/api/status
+
+concurrency:
+  group: backend-deploy
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -43,3 +52,52 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verificar token da Hostinger
+        id: check
+        env:
+          HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
+        run: |
+          if [ -z "$HOSTINGER_API_TOKEN" ]; then
+            echo "::warning::Secret HOSTINGER_API_TOKEN ausente: imagem publicada, mas o VPS não foi atualizado."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Atualizar projeto Docker no VPS (pull + recreate)
+        if: steps.check.outputs.skip != 'true'
+        env:
+          HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          API=https://developers.hostinger.com/api/vps/v1/virtual-machines/$VPS_ID
+          AUTH="Authorization: Bearer $HOSTINGER_API_TOKEN"
+
+          resp=$(curl -fsS -X POST -H "$AUTH" -H "Accept: application/json" "$API/docker/$DOCKER_PROJECT/update")
+          action_id=$(echo "$resp" | jq -r '.id')
+          echo "Ação Hostinger: $action_id"
+
+          for i in $(seq 1 40); do
+            state=$(curl -fsS -H "$AUTH" -H "Accept: application/json" "$API/actions/$action_id" | jq -r '.state')
+            echo "[$i] estado: $state"
+            case "$state" in
+              success) break ;;
+              error|failed) echo "::error::Update do projeto falhou na Hostinger"; exit 1 ;;
+            esac
+            sleep 10
+          done
+          [ "$state" = "success" ] || { echo "::error::Timeout aguardando a Hostinger"; exit 1; }
+
+      - name: Health check da API
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          for i in $(seq 1 18); do
+            if curl -fsS --max-time 10 "$HEALTH_URL"; then echo; echo "API OK"; exit 0; fi
+            echo "[$i] API ainda não respondeu, aguardando..."
+            sleep 10
+          done
+          echo "::error::API não respondeu em $HEALTH_URL"
+          exit 1
