@@ -74,7 +74,7 @@ const PREFERRED_FREE_MODELS = [
   'openai/gpt-oss-120b:free',
   'meta-llama/llama-3.3-70b-instruct:free',
 ];
-const MAX_MODEL_ATTEMPTS = 4;
+const MAX_MODEL_ATTEMPTS = 6;
 const MIN_CONTEXT = 32_000;
 const MODELS_CACHE_MS = 60 * 60 * 1000; // 1h
 
@@ -350,7 +350,12 @@ ${context}`;
   let textoBruto: { analise: string; modelo: string } | null = null;
   const deadline = Date.now() + 60_000; // orçamento total, alinhado ao timeout do frontend
 
-  for (const model of models) {
+  // Fila de tentativas: modelos com 429 (congestionados) voltam uma vez para o fim da fila
+  const queue = [...models];
+  const retried = new Set<string>();
+  while (queue.length > 0) {
+    const model = queue.shift()!;
+    if (retried.has(model)) await new Promise((r) => setTimeout(r, 3_000));
     const remaining = deadline - Date.now();
     if (remaining < 5_000) { errors.push('tempo esgotado'); break; }
 
@@ -368,7 +373,10 @@ ${context}`;
           model,
           messages: [{ role: 'user', content: userPrompt }],
           temperature: 0.3,
-          max_tokens: 900,
+          // Modelos de raciocínio (ex.: Nemotron) gastam tokens "pensando" antes de responder:
+          // limite folgado + esforço baixo evita resposta vazia por estouro de tokens.
+          max_tokens: 4000,
+          reasoning: { effort: 'low' },
           response_format: { type: 'json_object' },
         }),
         signal: AbortSignal.timeout(Math.min(45_000, remaining)),
@@ -381,7 +389,9 @@ ${context}`;
 
     if (response.ok) {
       const data = await response.json();
-      const text = data.choices?.[0]?.message?.content ?? '';
+      const choice = data.choices?.[0];
+      // Alguns provedores devolvem o JSON no campo de raciocínio quando o conteúdo vem vazio
+      const text = choice?.message?.content || (parseAnaliseJson(choice?.message?.reasoning ?? '') ? choice.message.reasoning : '');
       if (text) {
         const estruturada = parseAnaliseJson(text);
         if (estruturada) {
@@ -393,7 +403,7 @@ ${context}`;
         errors.push(`${model}: resposta fora do formato JSON`);
         continue;
       }
-      errors.push(`${model}: resposta vazia`);
+      errors.push(`${model}: resposta vazia${choice?.finish_reason ? ` (${choice.finish_reason})` : ''}`);
       continue;
     }
 
@@ -410,6 +420,10 @@ ${context}`;
     // 401/403 = chave inválida/sem permissão: não adianta tentar outros modelos.
     if (response.status === 401 || response.status === 403) {
       throw new Error(`Chave da OpenRouter recusada (${response.status}): ${String(msg).slice(0, 200)}`);
+    }
+    if (response.status === 429 && !retried.has(model)) {
+      retried.add(model);
+      queue.push(model);
     }
     // Demais erros (404, 429, 5xx): tenta o próximo modelo.
   }
