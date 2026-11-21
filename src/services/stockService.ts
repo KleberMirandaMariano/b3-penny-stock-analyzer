@@ -112,6 +112,8 @@ export async function getOptions(ticker: string): Promise<OptionData[]> {
       tipo: o.tipo ?? 'CALL',
       strike: o.strike ?? null,
       preco: o.preco ?? null,
+      bid: o.bid ?? null,
+      ask: o.ask ?? null,
       vencimento: o.vencimento ?? '',
     }));
   } catch {

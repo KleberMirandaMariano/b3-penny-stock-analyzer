@@ -1389,6 +1389,31 @@ function ExpandedOptionsRow({
   const calls = filteredOpts.filter((o) => o.tipo === 'CALL');
   const puts = filteredOpts.filter((o) => o.tipo === 'PUT');
 
+  // Bid/Ask ao vivo (yfinance, ~15 min) para toda a cadeia do ticker
+  const [liveMap, setLiveMap] = useState<Map<string, LiveOptionData>>(new Map());
+  const [liveLoading, setLiveLoading] = useState(false);
+  useEffect(() => {
+    if (isLoading || !opts || opts.length === 0) return;
+    // COTAHIST já trouxe as ofertas? Evita chamar o yfinance (lento e quase sempre vazio p/ B3)
+    if (opts.every((o) => o.bid != null || o.ask != null)) return;
+    let cancelled = false;
+    setLiveLoading(true);
+    getOptionsLive(ticker).then(({ opcoes }) => {
+      if (cancelled) return;
+      const m = new Map<string, LiveOptionData>();
+      // yfinance usa outro formato de ticker: casa por tipo + vencimento + strike
+      for (const o of opcoes) m.set(`${o.tipo}|${o.vencimento}|${o.strike?.toFixed(2)}`, o);
+      setLiveMap(m);
+      setLiveLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [ticker, isLoading, opts]);
+
+  const liveFor = (opt: OptionData) => liveMap.get(`${opt.tipo}|${opt.vencimento}|${opt.strike?.toFixed(2)}`);
+  // Prioridade: oferta de fechamento do COTAHIST (rb3) > yfinance ao vivo
+  const fmtLive = (v: number | null | undefined) =>
+    v != null && v > 0 ? `R$ ${v.toFixed(2)}` : liveLoading ? '…' : '—';
+
   return (
     <tr className="bg-[#FBFBFA]">
       <td colSpan={9} className="px-6 py-8">
@@ -1448,7 +1473,9 @@ function ExpandedOptionsRow({
                         <th className="px-4 py-2 font-bold text-[#141414]/40 whitespace-nowrap">Símbolo</th>
                         <th className="px-4 py-2 w-20 text-center"></th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40">Strike</th>
-                        <th className="px-4 py-2 font-bold text-[#141414]/40 text-right">Prêmio</th>
+                        <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Melhor oferta de venda (ask) no fechamento do último pregão: quanto você paga para comprar">Compra</th>
+                        <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Melhor oferta de compra (bid) no fechamento do último pregão: quanto você recebe ao vender">Venda</th>
+                        <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Último negócio">Último</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1465,7 +1492,13 @@ function ExpandedOptionsRow({
                               <MoneynessBadge moneyness={moneyness} />
                             </td>
                             <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
-                            <td className="px-4 py-2 font-mono text-right text-emerald-600 font-bold">
+                            <td className="px-4 py-2 font-mono text-right text-[#141414]/80 whitespace-nowrap">
+                              {fmtLive(opt.ask ?? liveFor(opt)?.ask)}
+                            </td>
+                            <td className="px-4 py-2 font-mono text-right text-[#141414]/80 whitespace-nowrap">
+                              {fmtLive(opt.bid ?? liveFor(opt)?.bid)}
+                            </td>
+                            <td className="px-4 py-2 font-mono text-right text-emerald-600 font-bold whitespace-nowrap">
                               R$ {opt.preco?.toFixed(2)}
                             </td>
                           </tr>
@@ -1473,7 +1506,7 @@ function ExpandedOptionsRow({
                       })}
                       {calls.length === 0 && (
                         <tr>
-                          <td colSpan={4} className="px-4 py-4 text-center text-[#141414]/30">
+                          <td colSpan={6} className="px-4 py-4 text-center text-[#141414]/30">
                             Nenhuma CALL disponível
                           </td>
                         </tr>
@@ -1505,7 +1538,9 @@ function ExpandedOptionsRow({
                         <th className="px-4 py-2 font-bold text-[#141414]/40 whitespace-nowrap">Símbolo</th>
                         <th className="px-4 py-2 w-20 text-center"></th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40">Strike</th>
-                        <th className="px-4 py-2 font-bold text-[#141414]/40 text-right">Prêmio</th>
+                        <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Melhor oferta de venda (ask) no fechamento do último pregão: quanto você paga para comprar">Compra</th>
+                        <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Melhor oferta de compra (bid) no fechamento do último pregão: quanto você recebe ao vender">Venda</th>
+                        <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Último negócio">Último</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1518,7 +1553,13 @@ function ExpandedOptionsRow({
                               <MoneynessBadge moneyness={moneyness} />
                             </td>
                             <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
-                            <td className="px-4 py-2 font-mono text-right text-rose-600 font-bold">
+                            <td className="px-4 py-2 font-mono text-right text-[#141414]/80 whitespace-nowrap">
+                              {fmtLive(opt.ask ?? liveFor(opt)?.ask)}
+                            </td>
+                            <td className="px-4 py-2 font-mono text-right text-[#141414]/80 whitespace-nowrap">
+                              {fmtLive(opt.bid ?? liveFor(opt)?.bid)}
+                            </td>
+                            <td className="px-4 py-2 font-mono text-right text-rose-600 font-bold whitespace-nowrap">
                               R$ {opt.preco?.toFixed(2)}
                             </td>
                           </tr>
@@ -1526,7 +1567,7 @@ function ExpandedOptionsRow({
                       })}
                       {puts.length === 0 && (
                         <tr>
-                          <td colSpan={4} className="px-4 py-4 text-center text-[#141414]/30">
+                          <td colSpan={6} className="px-4 py-4 text-center text-[#141414]/30">
                             Nenhuma PUT disponível
                           </td>
                         </tr>

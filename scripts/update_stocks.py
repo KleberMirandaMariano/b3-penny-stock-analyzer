@@ -118,6 +118,8 @@ def _parse_cotahist_line(line: str) -> dict | None:
 
     codneg = line[12:24].strip()
     preult = int(line[108:121]) / 100.0
+    preofc = int(line[121:134]) / 100.0  # melhor oferta de compra (bid)
+    preofv = int(line[134:147]) / 100.0  # melhor oferta de venda (ask)
     volume = int(line[170:188]) / 100.0
 
     rec = {
@@ -137,6 +139,8 @@ def _parse_cotahist_line(line: str) -> dict | None:
         rec["preexe"] = preexe
         rec["datven"] = datven
         rec["tipo"] = "CALL" if tpmerc == "070" else "PUT"
+        rec["bid"] = preofc if preofc > 0 else None
+        rec["ask"] = preofv if preofv > 0 else None
 
     return rec
 
@@ -224,6 +228,8 @@ def fetch_cotahist_python(max_preco: float = 15.0) -> dict | None:
                 "preco": rec["preult"],
                 "strike": rec["preexe"],
                 "vencimento": rec["datven"],
+                "bid": rec["bid"],
+                "ask": rec["ask"],
             })
 
     if not acoes:
@@ -468,6 +474,8 @@ def fetch_stock(ticker: str, max_preco: float) -> dict | None:
                                 "tipo": "CALL",
                                 "strike": _safe_round(row["strike"]),
                                 "preco": _safe_round(row["lastPrice"]),
+                                "bid": _safe_round(row.get("bid")),
+                                "ask": _safe_round(row.get("ask")),
                                 "vencimento": exp_date
                             })
                         for _, row in chain.puts.iterrows():
@@ -476,6 +484,8 @@ def fetch_stock(ticker: str, max_preco: float) -> dict | None:
                                 "tipo": "PUT",
                                 "strike": _safe_round(row["strike"]),
                                 "preco": _safe_round(row["lastPrice"]),
+                                "bid": _safe_round(row.get("bid")),
+                                "ask": _safe_round(row.get("ask")),
                                 "vencimento": exp_date
                             })
                     except Exception as e:
@@ -636,6 +646,8 @@ def enrich_with_options(stocks: list[dict], cotahist: dict | None) -> list[dict]
             "tipo": o["tipo"],
             "strike": _safe_round(o["strike"]),
             "preco": _safe_round(o["preco"]),
+            "bid": _safe_round(o.get("bid")),
+            "ask": _safe_round(o.get("ask")),
             "vencimento": venc,
         })
 

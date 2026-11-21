@@ -61,6 +61,14 @@ penny_stocks <- equity %>%
   filter(!is.na(preco), preco > 0) %>%
   rename(ticker = cod_negociacao)
 
+# Melhor oferta de compra (bid) e de venda (ask) no fechamento — nomes variam entre versões do rb3
+pick_col <- function(df, candidates) {
+  hit <- intersect(candidates, names(df))
+  if (length(hit) > 0) as.numeric(df[[hit[1]]]) else rep(NA_real_, nrow(df))
+}
+options_raw$bid_fech <- pick_col(options_raw, c("preco_melhor_oferta_compra", "preco_oferta_compra", "best_bid", "PREOFC"))
+options_raw$ask_fech <- pick_col(options_raw, c("preco_melhor_oferta_venda", "preco_oferta_venda", "best_ask", "PREOFV"))
+
 # Filtra opções dos ativos
 options_data <- options_raw %>%
   transmute(
@@ -68,6 +76,8 @@ options_data <- options_raw %>%
     ticker_objeto = if ("cod_negociacao_papel_objeto" %in% names(.)) cod_negociacao_papel_objeto else NA_character_,
     preco = as.numeric(preco_ultimo),
     strike = as.numeric(preco_exercicio),
+    bid = ifelse(bid_fech > 0, bid_fech, NA_real_),
+    ask = ifelse(ask_fech > 0, ask_fech, NA_real_),
     vencimento = if ("data_vencimento" %in% names(.)) format(data_vencimento, "%Y-%m-%d") else NA_character_,
     tipo = case_when(
       grepl("[A-L][0-9]+$", cod_negociacao) ~ "CALL",
