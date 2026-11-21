@@ -745,6 +745,12 @@ def main():
                 cotahist = json.load(f)
         except Exception:
             pass
+        # Cache antigo (sem bid/ask) ou ausente: baixa o COTAHIST de novo
+        opcoes_cache = (cotahist or {}).get("opcoes")
+        cache_sem_ofertas = isinstance(opcoes_cache, list) and opcoes_cache and "bid" not in opcoes_cache[0]
+        if not cotahist or cache_sem_ofertas:
+            log.info("Cache COTAHIST ausente ou sem bid/ask — baixando novamente...")
+            cotahist = run_r_script() or fetch_cotahist_python(max_preco=args.max_preco + 5) or cotahist
     else:
         cotahist = run_r_script()
         if not cotahist:
