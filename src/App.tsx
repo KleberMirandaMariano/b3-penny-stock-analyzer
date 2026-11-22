@@ -1672,7 +1672,7 @@ function ExpandedOptionsRow({
               </div>
             )}
 
-            <div className={cn('grid grid-cols-1 gap-8', quantOn ? '2xl:grid-cols-2' : 'lg:grid-cols-2')}>
+            <div className={cn('grid grid-cols-1 gap-8', quantOn ? 'grid-cols-1' : 'lg:grid-cols-2')}>
               {/* CALLS */}
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -1714,7 +1714,7 @@ function ExpandedOptionsRow({
                             <td className="px-4 py-2 w-20 text-center">
                               <MoneynessBadge moneyness={moneyness} />
                             </td>
-                            <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
+                            <td className="px-4 py-2 font-mono text-[#141414]/60 whitespace-nowrap">R$ {opt.strike?.toFixed(2)}</td>
                             <td className="px-4 py-2 font-mono text-right text-[#141414]/80 whitespace-nowrap">
                               {fmtLive(opt.ask ?? liveFor(opt)?.ask)}
                             </td>
@@ -1777,7 +1777,7 @@ function ExpandedOptionsRow({
                             <td className="px-4 py-2 w-20 text-center">
                               <MoneynessBadge moneyness={moneyness} />
                             </td>
-                            <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
+                            <td className="px-4 py-2 font-mono text-[#141414]/60 whitespace-nowrap">R$ {opt.strike?.toFixed(2)}</td>
                             <td className="px-4 py-2 font-mono text-right text-[#141414]/80 whitespace-nowrap">
                               {fmtLive(opt.ask ?? liveFor(opt)?.ask)}
                             </td>
