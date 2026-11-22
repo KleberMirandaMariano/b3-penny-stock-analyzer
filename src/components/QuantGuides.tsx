@@ -3,7 +3,8 @@
  * Abrem ao passar o mouse (ou focar/tocar) no título de cada card e destacam
  * a linha que vale para o ativo aberto.
  */
-import React, { useId, useRef, useState } from 'react';
+import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Info } from 'lucide-react';
 import { cn } from '../utils';
 
@@ -31,8 +32,13 @@ const num = (v: number | null | undefined, d = 2) =>
   v == null ? '—' : v.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
 
 // ---------------------------------------------------------------------------
-// Popover acessível: hover, foco do teclado e toque
+// Popover acessível: hover, foco do teclado e toque.
+// Renderizado num portal (position: fixed) para não ser cortado por caixas
+// com rolagem, como as tabelas de opções.
 // ---------------------------------------------------------------------------
+const GAP = 8;
+const EDGE = 12;
+
 export function GuideTip({
   label,
   title,
@@ -47,52 +53,119 @@ export function GuideTip({
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<React.CSSProperties>({});
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
   const openedAt = useRef(0);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const id = useId();
-  // No toque, foco/hover e clique chegam juntos: o clique logo após abrir não fecha
+
+  const cancelClose = () => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    closeTimer.current = null;
+  };
   const show = () => {
+    cancelClose();
     openedAt.current = Date.now();
     setOpen(true);
   };
+  // Pequeno atraso: dá tempo de levar o mouse do título até o guia
+  const hideSoon = () => {
+    cancelClose();
+    closeTimer.current = setTimeout(() => setOpen(false), 150);
+  };
+
+  // Posição: abaixo do título (ou acima, se faltar espaço), sempre dentro da tela
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const btn = btnRef.current?.getBoundingClientRect();
+      const tip = tipRef.current;
+      if (!btn || !tip) return;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const w = Math.min(vw - 2 * EDGE, 576);
+      let left = align === 'right' ? btn.right - w : btn.left;
+      left = Math.max(EDGE, Math.min(left, vw - w - EDGE));
+      const below = vh - btn.bottom - GAP - EDGE;
+      const above = btn.top - GAP - EDGE;
+      const h = tip.scrollHeight;
+      const placeBelow = below >= Math.min(h, 320) || below >= above;
+      const maxH = Math.max(160, placeBelow ? below : above);
+      setPos({
+        left,
+        width: w,
+        maxHeight: maxH,
+        ...(placeBelow ? { top: btn.bottom + GAP } : { bottom: vh - btn.top + GAP }),
+      });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open, align]);
+
+  // Fecha ao tocar/clicar fora
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (!btnRef.current?.contains(t) && !tipRef.current?.contains(t)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
+  }, [open]);
+
+  useEffect(() => cancelClose, []);
+
   return (
-    <span
-      className={cn('relative inline-flex', className)}
-      // Só mouse de verdade abre/fecha por hover; no toque, quem decide é o clique
-      onPointerEnter={(e) => e.pointerType === 'mouse' && show()}
-      onPointerLeave={(e) => e.pointerType === 'mouse' && setOpen(false)}
-    >
+    <span className={cn('relative inline-flex', className)}>
       <button
+        ref={btnRef}
         type="button"
         aria-expanded={open}
         aria-describedby={open ? id : undefined}
-        onClick={() => (Date.now() - openedAt.current < 500 ? setOpen(true) : setOpen((o) => !o))}
+        // Só mouse de verdade abre/fecha por hover; no toque, quem decide é o clique
+        onPointerEnter={(e) => e.pointerType === 'mouse' && show()}
+        onPointerLeave={(e) => e.pointerType === 'mouse' && hideSoon()}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (Date.now() - openedAt.current < 500) setOpen(true);
+          else setOpen((o) => !o);
+        }}
         onFocus={show}
-        onBlur={() => setOpen(false)}
+        onBlur={(e) => {
+          const next = e.relatedTarget as Node | null;
+          if (next && !tipRef.current?.contains(next)) setOpen(false);
+        }}
         onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}
         className="inline-flex items-center gap-1 cursor-help text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
       >
         {label}
         <Info className="w-3 h-3 opacity-60 shrink-0" aria-hidden="true" />
       </button>
-      {open && (
-        <div
-          id={id}
-          role="tooltip"
-          className={cn(
-            'absolute top-full mt-2 z-50 w-[min(92vw,36rem)] max-h-[70vh] overflow-y-auto',
-            // celular: centralizado na tela, sem vazar pelas bordas
-            'max-sm:fixed max-sm:inset-x-3 max-sm:top-16 max-sm:mt-0 max-sm:w-auto max-sm:max-h-[80vh]',
-            'bg-white border border-[#141414]/10 rounded-xl shadow-xl p-4 text-left normal-case tracking-normal font-normal',
-            align === 'right' ? 'sm:right-0' : 'sm:left-0'
-          )}
-        >
-          <p className="text-sm font-bold text-[#141414] mb-2">{title}</p>
-          <div className="space-y-3 text-xs text-[#3f3f3f] leading-relaxed">{children}</div>
-          <p className="mt-3 pt-2 border-t border-[#141414]/5 text-[10px] text-[#5c5c5c]">
-            Guia de leitura educativo, não é recomendação de investimento.
-          </p>
-        </div>
-      )}
+      {open &&
+        createPortal(
+          <div
+            ref={tipRef}
+            id={id}
+            role="tooltip"
+            style={{ position: 'fixed', ...pos }}
+            onPointerEnter={(e) => e.pointerType === 'mouse' && cancelClose()}
+            onPointerLeave={(e) => e.pointerType === 'mouse' && hideSoon()}
+            className="z-[100] overflow-y-auto bg-white border border-[#141414]/10 rounded-xl shadow-xl p-4 text-left normal-case tracking-normal font-normal"
+          >
+            <p className="text-sm font-bold text-[#141414] mb-2">{title}</p>
+            <div className="space-y-3 text-xs text-[#3f3f3f] leading-relaxed">{children}</div>
+            <p className="mt-3 pt-2 border-t border-[#141414]/5 text-[10px] text-[#5c5c5c]">
+              Guia de leitura educativo, não é recomendação de investimento.
+            </p>
+          </div>,
+          document.body
+        )}
     </span>
   );
 }
@@ -384,6 +457,164 @@ export function MatrizGuide({ ctx }: { ctx: GuideCtx }) {
         Depois: o <strong>Monte Carlo</strong> escolhe o strike com a melhor relação entre P_modelo e P_mercado, e a{' '}
         <strong>Faixa</strong> posiciona strikes, stop e alvo.
       </p>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Colunas da tabela de opções
+// ---------------------------------------------------------------------------
+export interface ColCtx {
+  ivAtm: number | null;    // IV ATM do vencimento, %
+  volPrev: number | null;  // vol prevista até o vencimento, %
+  metodo?: string;         // "GARCH(1,1)" / "EWMA"
+}
+
+export function ColVIGuide({ ctx }: { ctx: ColCtx }) {
+  const ref = ctx.volPrev;
+  return (
+    <>
+      <Purpose>saber quanto de movimento o mercado está cobrando <strong>nesta série</strong>.</Purpose>
+      <p>
+        É a volatilidade que, no Black-Scholes, reproduz o preço da opção. Usa o preço médio entre compra e venda; sem as
+        duas ofertas, usa o último negócio.
+      </p>
+      <Now>
+        Referências deste vencimento: IV ATM {pct(ctx.ivAtm, 1)} · vol prevista {pct(ref, 1)}
+      </Now>
+      <Table
+        head={['VI da série vs vol prevista', 'Leitura', 'Uso']}
+        rows={[
+          { cells: ['< 0,8 ×', 'Série barata', 'Candidata para a ponta comprada.'] },
+          { cells: ['0,8 – 1,2 ×', 'Em linha', 'Sem vantagem de vol nesta série.'] },
+          { cells: ['> 1,2 ×', 'Série cara', 'Candidata para a ponta vendida (com risco definido).'] },
+        ]}
+      />
+      <H>Leia com cuidado</H>
+      <Table
+        head={['Se…', 'Então']}
+        rows={[
+          { cells: ['VI muito diferente das séries vizinhas', 'Provável preço velho (último negócio) ou spread largo. Confira Compra e Venda.'] },
+          { cells: ['Puts fora do dinheiro com VI maior que as calls', 'Normal: é o "smile"/skew, o mercado cobra mais pela proteção.'] },
+          { cells: ['"—"', 'Sem preço, ou preço fora dos limites de arbitragem: não dá para calcular.'] },
+        ]}
+      />
+    </>
+  );
+}
+
+export function ColDeltaGuide() {
+  return (
+    <>
+      <Purpose>medir a exposição direcional da opção e estimar a chance de ela terminar dentro do dinheiro.</Purpose>
+      <p>
+        Δ = quanto o prêmio varia para R$ 1 de variação no ativo. Calculado com a VI da própria série (ou a vol prevista,
+        se não houver VI). Calls têm Δ positivo; puts, negativo.
+      </p>
+      <Table
+        head={['|Δ|', 'Perfil', 'Uso típico']}
+        rows={[
+          { cells: ['0,05 – 0,25', 'Fora do dinheiro', 'Prêmio baixo, pouca chance. Ponta vendida de travas/condor; compra só como "loteria" controlada.'] },
+          { cells: ['0,40 – 0,60', 'No dinheiro', 'Maior sensibilidade a vol e tempo. Ponta comprada de travas direcionais.'] },
+          { cells: ['> 0,70', 'Dentro do dinheiro', 'Se comporta quase como a ação. Substitui o papel com menos capital.'] },
+        ]}
+      />
+      <H>Na prática</H>
+      <Table
+        head={['Para…', 'Use o Δ assim']}
+        rows={[
+          { cells: ['Estimar P_mercado', '|Δ| ≈ probabilidade de terminar no dinheiro (Δ 0,20 ≈ 20%). Compare com a coluna P(exerc.).'] },
+          { cells: ['Hedge', 'Ações para neutralizar = Δ × quantidade de opções.'] },
+          { cells: ['Somar posições', 'O Δ total da estrutura diz o seu viés líquido: perto de zero = neutro.'] },
+        ]}
+      />
+    </>
+  );
+}
+
+export function ColJustoGuide({ ctx }: { ctx: ColCtx }) {
+  return (
+    <>
+      <Purpose>ter um preço de referência do modelo para comparar com o que o mercado pede.</Purpose>
+      <p>
+        Binomial americano (permite exercício antecipado) com a <strong>vol prevista</strong> até o vencimento, a Selic e
+        o spot do último pregão.
+      </p>
+      <Now>
+        Vol usada neste vencimento: {pct(ctx.volPrev, 1)} {ctx.metodo ? `(${ctx.metodo})` : ''}
+      </Now>
+      <Table
+        head={['Se você vai…', 'Compare o Justo com']}
+        rows={[
+          { cells: ['Comprar', 'A coluna Compra (o preço que você paga). Justo acima dela = a favor.'] },
+          { cells: ['Vender', 'A coluna Venda (o preço que você recebe). Justo abaixo dela = a favor.'] },
+          { cells: ['Sem ofertas', 'O Último, com cautela: pode ser um negócio antigo.'] },
+        ]}
+      />
+      <H>Limites do modelo</H>
+      <Table
+        head={['Atenção', 'Efeito']}
+        rows={[
+          { cells: ['É um modelo, não o preço "certo"', 'Muda junto com a vol prevista. Use para comparar, não como alvo.'] },
+          { cells: ['Dividendos até o vencimento não entram', 'O justo da call fica alto e o da put fica baixo perto de uma data-com.'] },
+          { cells: ['Vol única para todos os strikes', 'Não captura o smile: puts muito fora do dinheiro tendem a parecer "caras".'] },
+        ]}
+      />
+    </>
+  );
+}
+
+export function ColEdgeGuide() {
+  return (
+    <>
+      <Purpose>apontar as séries em que o mercado está mais longe do preço do modelo.</Purpose>
+      <p className="font-mono text-[11px]">Mercado × justo = preço médio (ou último) ÷ justo − 1</p>
+      <Table
+        head={['Valor (referência)', 'Leitura', 'Candidata a']}
+        rows={[
+          { cells: ['< −20% (abaixo)', 'Barata pelo modelo', 'Ponta comprada'] },
+          { cells: ['−20% a +20%', 'Perto do justo', 'Sem vantagem relevante'] },
+          { cells: ['> +20% (acima)', 'Cara pelo modelo', 'Ponta vendida, com risco definido'] },
+        ]}
+      />
+      <H>Como ler direito</H>
+      <Table
+        head={['Se…', 'Então']}
+        rows={[
+          { cells: ['Quase toda a cadeia está "abaixo"', 'É a vol implícita inteira abaixo da prevista: decisão de vol (card Volatilidade), não de strike. Procure as séries que destoam das vizinhas.'] },
+          { cells: ['O valor veio do último negócio', 'Pode ser preço velho. Prefira séries com Compra e Venda.'] },
+          { cells: ['Spread largo (Compra × Venda)', 'O preço médio não é executável. Calcule com o lado que você vai operar.'] },
+          { cells: ['Prêmio muito pequeno (centavos)', 'Percentuais exagerados: um centavo vira dezenas de %.'] },
+        ]}
+      />
+    </>
+  );
+}
+
+export function ColPExercGuide() {
+  return (
+    <>
+      <Purpose>comparar a probabilidade do modelo com a embutida no preço (o uso mais valioso do Monte Carlo).</Purpose>
+      <p>
+        Fração das trajetórias do Monte Carlo (vol prevista + deriva bayesiana) que terminam dentro do dinheiro: acima do
+        strike para calls, abaixo para puts.
+      </p>
+      <Table
+        head={['Compare com |Δ| (P_mercado)', 'Leitura', 'Estrutura favorecida']}
+        rows={[
+          { cells: ['P(exerc.) > |Δ| + 5 p.p.', 'Barata pelo modelo', 'Comprar / trava comprada nesse strike'] },
+          { cells: ['P(exerc.) < |Δ| − 5 p.p.', 'Cara pelo modelo', 'Vender, com risco definido'] },
+          { cells: ['Diferença < 5 p.p.', 'Sem vantagem', 'Nada a fazer nesse strike'] },
+        ]}
+      />
+      <H>Atenção</H>
+      <Table
+        head={['Se…', 'Então']}
+        rows={[
+          { cells: ['Calls todas acima e puts todas abaixo do Δ (ou o contrário)', 'É a deriva do modelo puxando para um lado. Confira o card Monte Carlo antes de confiar.'] },
+          { cells: ['Vencimento muito curto', 'Poucas trajetórias cruzam strikes distantes: o número fica instável.'] },
+        ]}
+      />
     </>
   );
 }

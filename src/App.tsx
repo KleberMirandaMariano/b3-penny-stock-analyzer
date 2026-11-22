@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getStocks, getOptions, getOptionsLive, getOptionsQuant, analyzeOption, triggerUpdate, getUpdateStatus, getMe, type StocksResponse, type LiveOptionData, type ChainRow, type AnalyzeResult, type OptionsQuant, type QuantSerie } from './services/stockService';
 import { AiAnalysisCard } from './components/AiAnalysisCard';
-import { GuideTip, RegimeGuide, VolGuide, MonteCarloGuide, FaixaGuide, MatrizGuide, type GuideCtx } from './components/QuantGuides';
+import { GuideTip, RegimeGuide, VolGuide, MonteCarloGuide, FaixaGuide, MatrizGuide, ColVIGuide, ColDeltaGuide, ColJustoGuide, ColEdgeGuide, ColPExercGuide, type GuideCtx, type ColCtx } from './components/QuantGuides';
 import { cn, type StockData, type OptionData } from './utils';
 import { calcIV, calcGreeks, bsPrice, normCDF } from './blackScholes';
 import { bayesianUpdate, bayesianSensitivity } from './bayesian';
@@ -1523,15 +1523,25 @@ function QuantStrip({
   );
 }
 
-function QuantHeaderCells() {
+function QuantHeaderCells({ ctx }: { ctx: ColCtx }) {
   const th = 'px-3 py-2 font-bold text-blue-700 text-right bg-blue-50/60 whitespace-nowrap';
   return (
     <>
-      <th className={cn(th, 'border-l border-blue-100')} title="Volatilidade implícita do preço médio (ou do último)">VI</th>
-      <th className={th} title="Delta (Black-Scholes com a VI)">Δ</th>
-      <th className={th} title="Binomial americano com a vol prevista até o vencimento (GARCH)">Justo</th>
-      <th className={th} title="Preço médio (ou último) contra o justo">Mercado × justo</th>
-      <th className={th} title="Probabilidade de terminar dentro do dinheiro (Monte Carlo)">P(exerc.)</th>
+      <th className={cn(th, 'border-l border-blue-100')}>
+        <GuideTip label="VI" title="VI: volatilidade implícita da série"><ColVIGuide ctx={ctx} /></GuideTip>
+      </th>
+      <th className={th}>
+        <GuideTip label="Δ" title="Δ (delta)"><ColDeltaGuide /></GuideTip>
+      </th>
+      <th className={th}>
+        <GuideTip label="Justo" title="Justo: preço do modelo"><ColJustoGuide ctx={ctx} /></GuideTip>
+      </th>
+      <th className={th}>
+        <GuideTip label="Mercado × justo" title="Mercado × justo" align="right"><ColEdgeGuide /></GuideTip>
+      </th>
+      <th className={th}>
+        <GuideTip label="P(exerc.)" title="P(exerc.): probabilidade de exercício" align="right"><ColPExercGuide /></GuideTip>
+      </th>
     </>
   );
 }
@@ -1694,6 +1704,12 @@ function ExpandedOptionsRow({
   }, [ticker, isLoading, opts]);
   const quantOn = showQuant && (quantLoading || !!quant?.disponivel);
   const quantFor = (opt: OptionData): QuantSerie | undefined => quant?.series?.[opt.ticker];
+  const vencQuant = quant?.vencimentos?.[selectedVenc];
+  const colCtx: ColCtx = {
+    ivAtm: vencQuant?.ivAtm ?? null,
+    volPrev: vencQuant?.volPrev ?? null,
+    metodo: quant?.vol?.metodoPrev,
+  };
 
   const liveFor = (opt: OptionData) => liveMap.get(`${opt.tipo}|${opt.vencimento}|${opt.strike?.toFixed(2)}`);
   // Prioridade: oferta de fechamento do COTAHIST (rb3) > yfinance ao vivo
@@ -1788,7 +1804,7 @@ function ExpandedOptionsRow({
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Melhor oferta de venda (ask) no fechamento do último pregão: quanto você paga para comprar">Compra</th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Melhor oferta de compra (bid) no fechamento do último pregão: quanto você recebe ao vender">Venda</th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Último negócio">Último</th>
-                        {quantOn && <QuantHeaderCells />}
+                        {quantOn && <QuantHeaderCells ctx={colCtx} />}
                       </tr>
                     </thead>
                     <tbody>
@@ -1855,7 +1871,7 @@ function ExpandedOptionsRow({
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Melhor oferta de venda (ask) no fechamento do último pregão: quanto você paga para comprar">Compra</th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Melhor oferta de compra (bid) no fechamento do último pregão: quanto você recebe ao vender">Venda</th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Último negócio">Último</th>
-                        {quantOn && <QuantHeaderCells />}
+                        {quantOn && <QuantHeaderCells ctx={colCtx} />}
                       </tr>
                     </thead>
                     <tbody>
