@@ -1354,6 +1354,7 @@ function OptionDetailModal({
 // ---------------------------------------------------------------------------
 // Camada quant (financial-analysis-framework)
 // ---------------------------------------------------------------------------
+const fmtData = (iso: string) => new Date(iso + 'T12:00:00Z').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
 const fmtNum = (v: number | null | undefined, d = 2) =>
   v == null ? '—' : v.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
 
@@ -1393,7 +1394,16 @@ function QuantStrip({
   }
   const v = quant.vencimentos?.[venc];
   const vencBr = venc ? new Date(venc + 'T12:00:00Z').toLocaleDateString('pt-BR') : '';
-  const gap = v?.ivAtm != null && quant.rv30 != null ? v.ivAtm - quant.rv30 : null;
+  const vol = quant.vol;
+  // Compara a implícita com a vol PREVISTA (se houver); senão, com a realizada 30d
+  const gapRef =
+    v?.ivAtm == null
+      ? null
+      : v.volPrev != null
+        ? { gap: v.ivAtm - v.volPrev, base: 'prevista' }
+        : quant.rv30 != null
+          ? { gap: v.ivAtm - quant.rv30, base: 'realizada 30d' }
+          : null;
   // posição do spot dentro da faixa p5–p95
   const span = v?.p5 != null && v?.p95 != null ? v.p95 - v.p5 : null;
   const spotPos = span ? Math.min(100, Math.max(0, ((spot - (v!.p5 as number)) / span) * 100)) : null;
@@ -1430,10 +1440,31 @@ function QuantStrip({
             <span className="text-2xl font-bold">{v?.ivAtm != null ? `${fmtNum(v.ivAtm, 1)}%` : '—'}</span>
             <span className="text-xs text-[#3f3f3f]">implícita ATM</span>
           </div>
-          <span className="font-mono text-xs text-[#3f3f3f]">Realizada 30d: {fmtNum(quant.rv30, 1)}%</span>
-          {gap != null && (
+          {v?.volPrev != null && (
+            <span className="font-mono text-xs text-[#141414]" title="Previsão de volatilidade média até o vencimento; é a vol usada no preço justo e no Monte Carlo">
+              Prevista ({vol?.metodoPrev ?? 'GARCH'}): <strong className="whitespace-nowrap">{fmtNum(v.volPrev, 1)}%</strong>
+            </span>
+          )}
+          <span className="font-mono text-xs text-[#3f3f3f] flex flex-wrap gap-x-2">
+            <span>Realizada</span>
+            <span className="whitespace-nowrap">10d {fmtNum(vol?.rv10, 1)}%</span>
+            <span className="whitespace-nowrap">30d {fmtNum(vol?.rv30 ?? quant.rv30, 1)}%</span>
+            <span className="whitespace-nowrap">60d {fmtNum(vol?.rv60, 1)}%</span>
+          </span>
+          {vol?.rvRobusta30 != null && (
+            <span className="font-mono text-xs text-[#3f3f3f]" title="Realizada de 30 dias com os retornos limitados a ±3 desvios robustos (MAD)">
+              Robusta 30d: {fmtNum(vol.rvRobusta30, 1)}%
+            </span>
+          )}
+          {vol?.evento && vol.maiorMov && (
             <span className="text-[11px] font-semibold text-amber-800">
-              Implícita {fmtNum(Math.abs(gap), 1)} p.p. {gap < 0 ? 'abaixo' : 'acima'} da realizada
+              Realizada 30d inflada por evento: {fmtData(vol.maiorMov.data)} {vol.maiorMov.pct > 0 ? '+' : ''}
+              {fmtNum(vol.maiorMov.pct, 1)}%
+            </span>
+          )}
+          {gapRef != null && (
+            <span className="text-[11px] font-semibold text-[#3f3f3f]">
+              Implícita {fmtNum(Math.abs(gapRef.gap), 1)} p.p. {gapRef.gap < 0 ? 'abaixo' : 'acima'} da {gapRef.base}
             </span>
           )}
         </QuantCard>
@@ -1447,6 +1478,7 @@ function QuantStrip({
           </span>
           <span className="text-[11px] text-[#5c5c5c]">
             {(quant.simulacoes ?? 0).toLocaleString('pt-BR')} trajetórias, deriva bayesiana
+            {v?.volPrev != null ? `, vol prevista ${fmtNum(v.volPrev, 1)}%` : ''}
           </span>
         </QuantCard>
         <QuantCard label="Faixa de preço até o vencimento">
@@ -1473,7 +1505,7 @@ function QuantHeaderCells() {
     <>
       <th className={cn(th, 'border-l border-blue-100')} title="Volatilidade implícita do preço médio (ou do último)">VI</th>
       <th className={th} title="Delta (Black-Scholes com a VI)">Δ</th>
-      <th className={th} title="Binomial americano com a vol realizada de 30 dias">Justo</th>
+      <th className={th} title="Binomial americano com a vol prevista até o vencimento (GARCH)">Justo</th>
       <th className={th} title="Preço médio (ou último) contra o justo">Mercado × justo</th>
       <th className={th} title="Probabilidade de terminar dentro do dinheiro (Monte Carlo)">P(exerc.)</th>
     </>

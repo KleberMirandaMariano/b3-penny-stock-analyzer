@@ -38,6 +38,7 @@ N_SIMULATIONS = 20_000
 HIST_DAYS = 252          # janela para regime e Monte Carlo
 RV_WINDOW = 30           # vol realizada
 ATM_BAND = 0.02          # mesmo critério do site (±2%)
+CACHE_VERSION = "v2"     # muda quando o formato/método do resultado muda
 
 
 def out(payload: dict, code: int = 0) -> None:
@@ -306,6 +307,74 @@ def business_days(start: date, end: date) -> int:
     return int(np.busday_count(start, end, holidays=[d.date() for d in hol]))
 
 
+# ---------------------------------------------------------------------------
+# Volatilidade: realizada (várias janelas), robusta e prevista
+# ---------------------------------------------------------------------------
+EWMA_LAMBDA = 0.94      # RiskMetrics
+ROBUST_CLIP = 3.0       # winsorização em ±3 desvios robustos
+
+
+def _ann(x: float) -> float:
+    return float(x) * math.sqrt(252)
+
+
+def realized_vols(rets: pd.Series) -> dict:
+    """Realizada 10/30/60d, realizada robusta 30d e o maior movimento da janela de 30d."""
+    out_ = {f"rv{n}": r2(_ann(rets.tail(n).std()) * 100, 1) for n in (10, 30, 60) if len(rets) >= n}
+    w = rets.tail(RV_WINDOW)
+    med = float(w.median())
+    sigma_rob = 1.4826 * float((w - med).abs().median())  # desvio via MAD
+    if sigma_rob > 0:
+        clipped = w.clip(med - ROBUST_CLIP * sigma_rob, med + ROBUST_CLIP * sigma_rob)
+        out_["rvRobusta30"] = r2(_ann(clipped.std()) * 100, 1)
+    big = w.abs().idxmax()
+    out_["maiorMov"] = {"data": big.strftime("%Y-%m-%d"), "pct": r2(math.expm1(float(w[big])) * 100, 1)}
+    # Evento: o maior movimento passa de 3 desvios robustos
+    out_["evento"] = bool(sigma_rob > 0 and abs(float(w[big]) - med) > ROBUST_CLIP * sigma_rob)
+    return out_
+
+
+def ewma_vol(rets: pd.Series) -> float:
+    """Volatilidade EWMA diária (λ = 0,94): choques antigos perdem peso a cada dia."""
+    var = float(rets.head(20).var())
+    for x in rets.to_numpy():
+        var = EWMA_LAMBDA * var + (1 - EWMA_LAMBDA) * float(x) ** 2
+    return math.sqrt(var)
+
+
+def forecast_vol_path(rets: pd.Series, horizon: int) -> tuple[np.ndarray, str]:
+    """Vol diária prevista para cada dia até ``horizon`` (GARCH(1,1) do faf; EWMA de reserva)."""
+    ew = ewma_vol(rets)
+    try:
+        from faf.analysis.timeseries.garch import GARCHModel
+        g = GARCHModel(p=1, q=1, model="GARCH", dist="t", periods_per_year=252, random_state=42).fit(rets)
+        path = np.asarray(g.forecast(n_periods=horizon).forecast_vol, dtype=float)
+        ref = float(rets.tail(60).std())
+        # Sanidade: GARCH não convergido ou fora de 0,3×–3× a realizada 60d → EWMA
+        if g.converged and np.all(np.isfinite(path)) and 0.3 * ref < path.mean() < 3 * ref:
+            return path, "GARCH(1,1)"
+    except Exception as exc:
+        print(f"[options_quant] GARCH indisponível ({type(exc).__name__}): usando EWMA", file=sys.stderr)
+    return np.full(horizon, ew), "EWMA"
+
+
+def rescale_to_vol(close: pd.Series, sigma_daily: float) -> pd.Series:
+    """Mesma série com os log-retornos reescalados para a vol desejada.
+
+    Mantém a deriva, a forma da distribuição e o último preço; serve para o
+    Monte Carlo do faf simular com a vol PREVISTA em vez da histórica.
+    """
+    lr = np.log(close).diff().dropna()
+    mu, sd = float(lr.mean()), float(lr.std())
+    if sd <= 0:
+        return close
+    adj = mu + (lr - mu) * (sigma_daily / sd)
+    cum = adj.cumsum()
+    path = float(close.iloc[-1]) * np.exp(cum - cum.iloc[-1])
+    first = pd.Series([float(path.iloc[0]) / math.exp(float(adj.iloc[0]))], index=close.index[:1])
+    return pd.concat([first, path])
+
+
 def analyze(ticker: str) -> dict:
     opts, spot_cotahist, data_ref = load_chain(ticker)
     if not opts:
@@ -321,6 +390,8 @@ def analyze(ticker: str) -> dict:
     r = math.log(1 + selic / 100)
     rets = np.log(close).diff().dropna()
     rv = float(rets.tail(RV_WINDOW).std() * math.sqrt(252))
+    vols = realized_vols(rets)
+    vols["ewma"] = r2(_ann(ewma_vol(rets)) * 100, 1)
 
     # Regime bayesiano (0 = baixa, 1 = alta)
     regime = None
@@ -335,16 +406,25 @@ def analyze(ticker: str) -> dict:
     except Exception:
         pass
 
-    mc_model = MonteCarloForecast(n_simulations=N_SIMULATIONS, random_state=42).fit(close)
     ref = datetime.strptime(data_ref, "%Y-%m-%d").date()
+    vencs = sorted({o["vencimento"] for o in opts})
+    h_max = max(max(business_days(ref, datetime.strptime(v, "%Y-%m-%d").date()), 1) for v in vencs)
+    vol_path, vol_metodo = forecast_vol_path(rets, h_max)
+    vols["metodoPrev"] = vol_metodo
 
     vencimentos: dict[str, dict] = {}
     series: dict[str, dict] = {}
-    for venc in sorted({o["vencimento"] for o in opts}):
+    for venc in vencs:
         vdate = datetime.strptime(venc, "%Y-%m-%d").date()
         T = max((vdate - ref).days, 1) / 365
         h = max(business_days(ref, vdate), 1)
-        mc = mc_model.forecast(horizon=h)
+        # Vol prevista média até o vencimento (variância média do caminho)
+        sig_d = float(np.sqrt(np.mean(vol_path[:h] ** 2)))
+        vol_prev = _ann(sig_d)
+        # Monte Carlo do faf com os retornos reescalados para a vol prevista
+        mc = MonteCarloForecast(n_simulations=N_SIMULATIONS, random_state=42).fit(
+            rescale_to_vol(close, sig_d)
+        ).forecast(horizon=h)
         term = mc.terminal_prices
 
         atm_ivs = []
@@ -363,8 +443,8 @@ def analyze(ticker: str) -> dict:
             if iv is not None and abs(K - spot) / spot <= ATM_BAND:
                 atm_ivs.append(iv)
 
-            delta = black_scholes(spot, K, T, r, iv or rv, typ).delta
-            justo = binomial_price(spot, K, T, r, rv, typ, style="american").price
+            delta = black_scholes(spot, K, T, r, iv or vol_prev, typ).delta
+            justo = binomial_price(spot, K, T, r, vol_prev, typ, style="american").price
             edge = (mid / justo - 1) * 100 if mid and justo > 0.005 else None
             pex = float(np.mean(term > K)) if typ == "call" else float(np.mean(term < K))
 
@@ -382,6 +462,7 @@ def analyze(ticker: str) -> dict:
             "p5": r2(np.percentile(term, 5)),
             "p95": r2(np.percentile(term, 95)),
             "ivAtm": r2(float(np.mean(atm_ivs)) * 100, 1) if atm_ivs else None,
+            "volPrev": r2(vol_prev * 100, 1),
         }
 
     return {
@@ -391,6 +472,7 @@ def analyze(ticker: str) -> dict:
         "spot": r2(spot),
         "selic": r2(selic),
         "rv30": r2(rv * 100, 1),
+        "vol": vols,
         "regime": regime,
         "vencimentos": vencimentos,
         "series": series,
@@ -413,7 +495,7 @@ def main() -> None:
     with open(COTAHIST_JSON, encoding="utf-8") as f:
         ch = json.load(f)
     data_ref = ch.get("dataReferencia") or ch.get("data_referencia") or "sem-data"
-    cache = QUANT_DIR / f"{ticker}_{data_ref}.json"
+    cache = QUANT_DIR / f"{ticker}_{data_ref}_{CACHE_VERSION}.json"
     if cache.exists():
         print(cache.read_text(encoding="utf-8"))
         return
