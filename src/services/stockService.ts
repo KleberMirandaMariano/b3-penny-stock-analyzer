@@ -178,6 +178,17 @@ export interface QuantVencimento {
   p5: number | null;
   p95: number | null;
   ivAtm: number | null;
+  volPrev?: number | null;  // vol prevista média até o vencimento, % a.a.
+}
+export interface QuantVol {
+  rv10?: number;
+  rv30?: number;
+  rv60?: number;
+  rvRobusta30?: number;
+  ewma?: number;
+  maiorMov?: { data: string; pct: number };
+  evento?: boolean;          // maior movimento > 3 desvios robustos
+  metodoPrev?: string;       // "GARCH(1,1)" ou "EWMA"
 }
 export interface OptionsQuant {
   disponivel: boolean;
@@ -187,6 +198,7 @@ export interface OptionsQuant {
   spot?: number;
   selic?: number;
   rv30?: number;
+  vol?: QuantVol;
   regime?: { rotulo: string; prob: number; pregoes: number } | null;
   vencimentos?: Record<string, QuantVencimento>;
   series?: Record<string, QuantSerie>;

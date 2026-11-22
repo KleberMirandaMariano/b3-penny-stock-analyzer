@@ -28,8 +28,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 ARG FAF_REF=main
 RUN --mount=type=secret,id=faf_token \
     if [ -s /run/secrets/faf_token ]; then \
-      pip install --no-cache-dir "financial-analysis-framework @ git+https://x-access-token:$(cat /run/secrets/faf_token)@github.com/KleberMirandaMariano/financial-analysis-framework.git@${FAF_REF}" \
-      && python3 -c "import faf; print('faf instalado:', '${FAF_REF}')"; \
+      pip install --no-cache-dir "financial-analysis-framework[forecasting] @ git+https://x-access-token:$(cat /run/secrets/faf_token)@github.com/KleberMirandaMariano/financial-analysis-framework.git@${FAF_REF}" \
+      && python3 -c "import faf, arch; print('faf instalado:', '${FAF_REF}')"; \
     else \
       echo "Secret faf_token ausente: imagem sem a camada quant (financial-analysis-framework)"; \
     fi

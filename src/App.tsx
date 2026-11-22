@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getStocks, getOptions, getOptionsLive, getOptionsQuant, analyzeOption, triggerUpdate, getUpdateStatus, getMe, type StocksResponse, type LiveOptionData, type ChainRow, type AnalyzeResult, type OptionsQuant, type QuantSerie } from './services/stockService';
 import { AiAnalysisCard } from './components/AiAnalysisCard';
+import { GuideTip, RegimeGuide, VolGuide, MonteCarloGuide, FaixaGuide, MatrizGuide, ColVIGuide, ColDeltaGuide, ColJustoGuide, ColEdgeGuide, ColPExercGuide, type GuideCtx, type ColCtx } from './components/QuantGuides';
 import { cn, type StockData, type OptionData } from './utils';
 import { calcIV, calcGreeks, bsPrice, normCDF } from './blackScholes';
 import { bayesianUpdate, bayesianSensitivity } from './bayesian';
@@ -1354,10 +1355,11 @@ function OptionDetailModal({
 // ---------------------------------------------------------------------------
 // Camada quant (financial-analysis-framework)
 // ---------------------------------------------------------------------------
+const fmtData = (iso: string) => new Date(iso + 'T12:00:00Z').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
 const fmtNum = (v: number | null | undefined, d = 2) =>
   v == null ? '—' : v.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
 
-function QuantCard({ label, children }: { label: string; children: React.ReactNode }) {
+function QuantCard({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="bg-white border border-[#141414]/[0.07] rounded-xl px-4 py-4 flex flex-col gap-1.5">
       <span className="text-[10px] font-bold uppercase tracking-widest text-[#5c5c5c]">{label}</span>
@@ -1393,24 +1395,56 @@ function QuantStrip({
   }
   const v = quant.vencimentos?.[venc];
   const vencBr = venc ? new Date(venc + 'T12:00:00Z').toLocaleDateString('pt-BR') : '';
-  const gap = v?.ivAtm != null && quant.rv30 != null ? v.ivAtm - quant.rv30 : null;
+  const vol = quant.vol;
+  // Compara a implícita com a vol PREVISTA (se houver); senão, com a realizada 30d
+  const gapRef =
+    v?.ivAtm == null
+      ? null
+      : v.volPrev != null
+        ? { gap: v.ivAtm - v.volPrev, base: 'prevista' }
+        : quant.rv30 != null
+          ? { gap: v.ivAtm - quant.rv30, base: 'realizada 30d' }
+          : null;
   // posição do spot dentro da faixa p5–p95
   const span = v?.p5 != null && v?.p95 != null ? v.p95 - v.p5 : null;
   const spotPos = span ? Math.min(100, Math.max(0, ((spot - (v!.p5 as number)) / span) * 100)) : null;
+
+  // Leitura atual para os guias de decisão (destacam a linha que vale agora)
+  const pAlta = quant.regime
+    ? (quant.regime.rotulo === 'Alta' ? quant.regime.prob : 1 - quant.regime.prob) * 100
+    : null;
+  const ivDec = v?.ivAtm != null ? v.ivAtm / 100 : null;
+  const ivHalf = ivDec != null && v?.pregoes ? 1.645 * ivDec * Math.sqrt(v.pregoes / 252) : null;
+  const guide: GuideCtx = {
+    pAlta,
+    razaoPrev: v?.ivAtm != null && v?.volPrev ? v.ivAtm / v.volPrev : null,
+    razaoRv30: v?.ivAtm != null && (quant.vol?.rv30 ?? quant.rv30) ? v.ivAtm / ((quant.vol?.rv30 ?? quant.rv30) as number) : null,
+    evento: !!quant.vol?.evento,
+    probAlta: v?.probAlta ?? null,
+    mcLargura: span && spot ? (span / 2 / spot) * 100 : null,
+    ivLargura: ivHalf != null ? (Math.exp(ivHalf) - 1) * 100 : null,
+    ivP5: ivHalf != null ? spot * Math.exp(-ivHalf) : null,
+    ivP95: ivHalf != null ? spot * Math.exp(ivHalf) : null,
+    mcP5: v?.p5 ?? null,
+    mcP95: v?.p95 ?? null,
+    spotPos,
+  };
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <BarChart3 className="w-4 h-4 text-blue-700" />
         <h4 className="text-[10px] font-bold uppercase tracking-widest text-blue-700">
-          Leitura quant do ativo · até o vencimento
+          <GuideTip label="Leitura quant do ativo · até o vencimento" title="Combinando os cards: matriz Regime × Volatilidade">
+            <MatrizGuide ctx={guide} />
+          </GuideTip>
         </h4>
         <span className="text-[10px] font-mono text-[#5c5c5c] basis-full sm:basis-auto sm:ml-auto">
           COTAHIST {quant.dataReferencia ? new Date(quant.dataReferencia + 'T12:00:00Z').toLocaleDateString('pt-BR') : ''} · Selic {fmtNum(quant.selic)}% · faf v{quant.faf}
         </span>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-        <QuantCard label="Regime bayesiano">
+        <QuantCard label={<GuideTip label="Regime bayesiano" title="Regime bayesiano: como usar"><RegimeGuide ctx={guide} /></GuideTip>}>
           {quant.regime ? (
             <>
               <span className={cn('text-2xl font-bold', quant.regime.rotulo === 'Alta' ? 'text-emerald-700' : 'text-rose-700')}>
@@ -1425,19 +1459,40 @@ function QuantStrip({
             <span className="text-sm text-[#5c5c5c]">Não calculado</span>
           )}
         </QuantCard>
-        <QuantCard label="Volatilidade">
+        <QuantCard label={<GuideTip label="Volatilidade" title="Volatilidade: comprar ou vender opções?"><VolGuide ctx={guide} /></GuideTip>}>
           <div className="flex items-baseline gap-2">
             <span className="text-2xl font-bold">{v?.ivAtm != null ? `${fmtNum(v.ivAtm, 1)}%` : '—'}</span>
             <span className="text-xs text-[#3f3f3f]">implícita ATM</span>
           </div>
-          <span className="font-mono text-xs text-[#3f3f3f]">Realizada 30d: {fmtNum(quant.rv30, 1)}%</span>
-          {gap != null && (
+          {v?.volPrev != null && (
+            <span className="font-mono text-xs text-[#141414]" title="Previsão de volatilidade média até o vencimento; é a vol usada no preço justo e no Monte Carlo">
+              Prevista ({vol?.metodoPrev ?? 'GARCH'}): <strong className="whitespace-nowrap">{fmtNum(v.volPrev, 1)}%</strong>
+            </span>
+          )}
+          <span className="font-mono text-xs text-[#3f3f3f] flex flex-wrap gap-x-2">
+            <span>Realizada</span>
+            <span className="whitespace-nowrap">10d {fmtNum(vol?.rv10, 1)}%</span>
+            <span className="whitespace-nowrap">30d {fmtNum(vol?.rv30 ?? quant.rv30, 1)}%</span>
+            <span className="whitespace-nowrap">60d {fmtNum(vol?.rv60, 1)}%</span>
+          </span>
+          {vol?.rvRobusta30 != null && (
+            <span className="font-mono text-xs text-[#3f3f3f]" title="Realizada de 30 dias com os retornos limitados a ±3 desvios robustos (MAD)">
+              Robusta 30d: {fmtNum(vol.rvRobusta30, 1)}%
+            </span>
+          )}
+          {vol?.evento && vol.maiorMov && (
             <span className="text-[11px] font-semibold text-amber-800">
-              Implícita {fmtNum(Math.abs(gap), 1)} p.p. {gap < 0 ? 'abaixo' : 'acima'} da realizada
+              Realizada 30d inflada por evento: {fmtData(vol.maiorMov.data)} {vol.maiorMov.pct > 0 ? '+' : ''}
+              {fmtNum(vol.maiorMov.pct, 1)}%
+            </span>
+          )}
+          {gapRef != null && (
+            <span className="text-[11px] font-semibold text-[#3f3f3f]">
+              Implícita {fmtNum(Math.abs(gapRef.gap), 1)} p.p. {gapRef.gap < 0 ? 'abaixo' : 'acima'} da {gapRef.base}
             </span>
           )}
         </QuantCard>
-        <QuantCard label={`Monte Carlo · ${v?.pregoes ?? '—'} pregões`}>
+        <QuantCard label={<GuideTip label={`Monte Carlo · ${v?.pregoes ?? '—'} pregões`} title="Monte Carlo: como usar" align="right"><MonteCarloGuide ctx={guide} /></GuideTip>}>
           <div className="flex items-baseline gap-2">
             <span className="text-2xl font-bold">{v?.probAlta != null ? `${v.probAlta}%` : '—'}</span>
             <span className="text-xs text-[#3f3f3f]">P(alta) até {vencBr}</span>
@@ -1447,9 +1502,10 @@ function QuantStrip({
           </span>
           <span className="text-[11px] text-[#5c5c5c]">
             {(quant.simulacoes ?? 0).toLocaleString('pt-BR')} trajetórias, deriva bayesiana
+            {v?.volPrev != null ? `, vol prevista ${fmtNum(v.volPrev, 1)}%` : ''}
           </span>
         </QuantCard>
-        <QuantCard label="Faixa de preço até o vencimento">
+        <QuantCard label={<GuideTip label="Faixa de preço até o vencimento" title="Faixa de preço: strikes, stops e alvos" align="right"><FaixaGuide ctx={guide} /></GuideTip>}>
           <div className="relative h-2.5 bg-[#eef2f7] rounded-full mt-3">
             <div className="absolute inset-y-0 left-[5%] right-[5%] bg-blue-200 rounded-full" />
             {spotPos != null && (
@@ -1467,15 +1523,25 @@ function QuantStrip({
   );
 }
 
-function QuantHeaderCells() {
+function QuantHeaderCells({ ctx }: { ctx: ColCtx }) {
   const th = 'px-3 py-2 font-bold text-blue-700 text-right bg-blue-50/60 whitespace-nowrap';
   return (
     <>
-      <th className={cn(th, 'border-l border-blue-100')} title="Volatilidade implícita do preço médio (ou do último)">VI</th>
-      <th className={th} title="Delta (Black-Scholes com a VI)">Δ</th>
-      <th className={th} title="Binomial americano com a vol realizada de 30 dias">Justo</th>
-      <th className={th} title="Preço médio (ou último) contra o justo">Mercado × justo</th>
-      <th className={th} title="Probabilidade de terminar dentro do dinheiro (Monte Carlo)">P(exerc.)</th>
+      <th className={cn(th, 'border-l border-blue-100')}>
+        <GuideTip label="VI" title="VI: volatilidade implícita da série"><ColVIGuide ctx={ctx} /></GuideTip>
+      </th>
+      <th className={th}>
+        <GuideTip label="Δ" title="Δ (delta)"><ColDeltaGuide /></GuideTip>
+      </th>
+      <th className={th}>
+        <GuideTip label="Justo" title="Justo: preço do modelo"><ColJustoGuide ctx={ctx} /></GuideTip>
+      </th>
+      <th className={th}>
+        <GuideTip label="Mercado × justo" title="Mercado × justo" align="right"><ColEdgeGuide /></GuideTip>
+      </th>
+      <th className={th}>
+        <GuideTip label="P(exerc.)" title="P(exerc.): probabilidade de exercício" align="right"><ColPExercGuide /></GuideTip>
+      </th>
     </>
   );
 }
@@ -1638,6 +1704,12 @@ function ExpandedOptionsRow({
   }, [ticker, isLoading, opts]);
   const quantOn = showQuant && (quantLoading || !!quant?.disponivel);
   const quantFor = (opt: OptionData): QuantSerie | undefined => quant?.series?.[opt.ticker];
+  const vencQuant = quant?.vencimentos?.[selectedVenc];
+  const colCtx: ColCtx = {
+    ivAtm: vencQuant?.ivAtm ?? null,
+    volPrev: vencQuant?.volPrev ?? null,
+    metodo: quant?.vol?.metodoPrev,
+  };
 
   const liveFor = (opt: OptionData) => liveMap.get(`${opt.tipo}|${opt.vencimento}|${opt.strike?.toFixed(2)}`);
   // Prioridade: oferta de fechamento do COTAHIST (rb3) > yfinance ao vivo
@@ -1732,7 +1804,7 @@ function ExpandedOptionsRow({
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Melhor oferta de venda (ask) no fechamento do último pregão: quanto você paga para comprar">Compra</th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Melhor oferta de compra (bid) no fechamento do último pregão: quanto você recebe ao vender">Venda</th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Último negócio">Último</th>
-                        {quantOn && <QuantHeaderCells />}
+                        {quantOn && <QuantHeaderCells ctx={colCtx} />}
                       </tr>
                     </thead>
                     <tbody>
@@ -1799,7 +1871,7 @@ function ExpandedOptionsRow({
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Melhor oferta de venda (ask) no fechamento do último pregão: quanto você paga para comprar">Compra</th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Melhor oferta de compra (bid) no fechamento do último pregão: quanto você recebe ao vender">Venda</th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Último negócio">Último</th>
-                        {quantOn && <QuantHeaderCells />}
+                        {quantOn && <QuantHeaderCells ctx={colCtx} />}
                       </tr>
                     </thead>
                     <tbody>
