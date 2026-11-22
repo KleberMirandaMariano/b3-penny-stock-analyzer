@@ -670,6 +670,58 @@ app.get('/api/options/:ticker/live', (req: Request, res: Response) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/options/:ticker/quant – Camada quant (financial-analysis-framework)
+// VI, delta, preço justo, P(exercício), regime bayesiano e Monte Carlo.
+// O script guarda o resultado por ativo/dia em data/quant/.
+// ---------------------------------------------------------------------------
+const quantInFlight = new Map<string, Promise<any>>();
+
+function runQuant(ticker: string): Promise<any> {
+  const script = path.join(ROOT_DIR, 'scripts', 'options_quant.py');
+  const python = process.platform === 'win32' ? 'python' : 'python3';
+  return new Promise((resolve) => {
+    if (!existsSync(script)) {
+      resolve({ disponivel: false, motivo: 'Script options_quant.py não encontrado.' });
+      return;
+    }
+    const proc = spawn(python, [script, ticker]);
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+    proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+    // 1º acesso pode baixar o COTAHIST anual da B3 (dezenas de MB)
+    const timeout = setTimeout(() => {
+      proc.kill();
+      resolve({ disponivel: false, motivo: 'Tempo esgotado no cálculo quant.' });
+    }, 180_000);
+    proc.on('close', () => {
+      clearTimeout(timeout);
+      try {
+        resolve(JSON.parse(stdout.trim().split('\n').pop() ?? ''));
+      } catch {
+        console.error('[quant] saída inválida:', stderr.slice(-500));
+        resolve({ disponivel: false, motivo: 'Falha ao processar o cálculo quant.' });
+      }
+    });
+  });
+}
+
+app.get('/api/options/:ticker/quant', async (req: Request, res: Response) => {
+  const ticker = req.params.ticker.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!ticker) {
+    res.status(400).json({ disponivel: false, motivo: 'Ticker inválido.' });
+    return;
+  }
+  // Pedidos simultâneos do mesmo ativo compartilham um único cálculo
+  let job = quantInFlight.get(ticker);
+  if (!job) {
+    job = runQuant(ticker).finally(() => quantInFlight.delete(ticker));
+    quantInFlight.set(ticker, job);
+  }
+  res.json(await job);
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/options/analyze – Análise IA via OpenRouter (com Rate Limit + Fila)
 // ✨ PROBLEMA 2: Rate limiting (30 req/15min)
 // ✨ PROBLEMA 3: Fila Bull Queue (1 por vez)

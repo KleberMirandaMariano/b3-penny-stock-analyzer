@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { getStocks, getOptions, getOptionsLive, analyzeOption, triggerUpdate, getUpdateStatus, getMe, type StocksResponse, type LiveOptionData, type ChainRow, type AnalyzeResult } from './services/stockService';
+import { getStocks, getOptions, getOptionsLive, getOptionsQuant, analyzeOption, triggerUpdate, getUpdateStatus, getMe, type StocksResponse, type LiveOptionData, type ChainRow, type AnalyzeResult, type OptionsQuant, type QuantSerie } from './services/stockService';
 import { AiAnalysisCard } from './components/AiAnalysisCard';
 import { cn, type StockData, type OptionData } from './utils';
 import { calcIV, calcGreeks, bsPrice, normCDF } from './blackScholes';
@@ -23,6 +23,7 @@ import {
   Calendar,
   Target,
   Percent,
+  SlidersHorizontal,
 } from 'lucide-react';
 import {
   BarChart,
@@ -1350,6 +1351,180 @@ function OptionDetailModal({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Camada quant (financial-analysis-framework)
+// ---------------------------------------------------------------------------
+const fmtNum = (v: number | null | undefined, d = 2) =>
+  v == null ? '—' : v.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
+
+function QuantCard({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="bg-white border border-[#141414]/[0.07] rounded-xl px-4 py-4 flex flex-col gap-1.5">
+      <span className="text-[10px] font-bold uppercase tracking-widest text-[#5c5c5c]">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+function QuantStrip({
+  quant,
+  loading,
+  venc,
+  spot,
+}: {
+  quant: OptionsQuant | null;
+  loading: boolean;
+  venc: string;
+  spot: number;
+}) {
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-[#5c5c5c]">
+        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+        Calculando leitura quant (financial-analysis-framework)… o primeiro acesso do dia leva alguns segundos.
+      </div>
+    );
+  }
+  if (!quant) return null;
+  if (!quant.disponivel) {
+    return <div className="text-xs text-[#5c5c5c]">Leitura quant indisponível: {quant.motivo}</div>;
+  }
+  const v = quant.vencimentos?.[venc];
+  const vencBr = venc ? new Date(venc + 'T12:00:00Z').toLocaleDateString('pt-BR') : '';
+  const gap = v?.ivAtm != null && quant.rv30 != null ? v.ivAtm - quant.rv30 : null;
+  // posição do spot dentro da faixa p5–p95
+  const span = v?.p5 != null && v?.p95 != null ? v.p95 - v.p5 : null;
+  const spotPos = span ? Math.min(100, Math.max(0, ((spot - (v!.p5 as number)) / span) * 100)) : null;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <BarChart3 className="w-4 h-4 text-blue-700" />
+        <h4 className="text-[10px] font-bold uppercase tracking-widest text-blue-700">
+          Leitura quant do ativo · até o vencimento
+        </h4>
+        <span className="text-[10px] font-mono text-[#5c5c5c] ml-auto">
+          COTAHIST {quant.dataReferencia ? new Date(quant.dataReferencia + 'T12:00:00Z').toLocaleDateString('pt-BR') : ''} · Selic {fmtNum(quant.selic)}% · faf v{quant.faf}
+        </span>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        <QuantCard label="Regime bayesiano">
+          {quant.regime ? (
+            <>
+              <span className={cn('text-2xl font-bold', quant.regime.rotulo === 'Alta' ? 'text-emerald-700' : 'text-rose-700')}>
+                {quant.regime.rotulo}
+              </span>
+              <span className="font-mono text-xs text-[#3f3f3f]">
+                P(regime de {quant.regime.rotulo.toLowerCase()}) = {Math.round(quant.regime.prob * 100)}%
+              </span>
+              <span className="text-[11px] text-[#5c5c5c]">Mistura gaussiana, 2 regimes, {quant.regime.pregoes} pregões</span>
+            </>
+          ) : (
+            <span className="text-sm text-[#5c5c5c]">Não calculado</span>
+          )}
+        </QuantCard>
+        <QuantCard label="Volatilidade">
+          <div className="flex items-baseline gap-2">
+            <span className="text-2xl font-bold">{v?.ivAtm != null ? `${fmtNum(v.ivAtm, 1)}%` : '—'}</span>
+            <span className="text-xs text-[#3f3f3f]">implícita ATM</span>
+          </div>
+          <span className="font-mono text-xs text-[#3f3f3f]">Realizada 30d: {fmtNum(quant.rv30, 1)}%</span>
+          {gap != null && (
+            <span className="text-[11px] font-semibold text-amber-800">
+              Implícita {fmtNum(Math.abs(gap), 1)} p.p. {gap < 0 ? 'abaixo' : 'acima'} da realizada
+            </span>
+          )}
+        </QuantCard>
+        <QuantCard label={`Monte Carlo · ${v?.pregoes ?? '—'} pregões`}>
+          <div className="flex items-baseline gap-2">
+            <span className="text-2xl font-bold">{v?.probAlta != null ? `${v.probAlta}%` : '—'}</span>
+            <span className="text-xs text-[#3f3f3f]">P(alta) até {vencBr}</span>
+          </div>
+          <span className="font-mono text-xs text-[#3f3f3f]">
+            Faixa 90%: R$ {fmtNum(v?.p5)} – R$ {fmtNum(v?.p95)}
+          </span>
+          <span className="text-[11px] text-[#5c5c5c]">
+            {(quant.simulacoes ?? 0).toLocaleString('pt-BR')} trajetórias, deriva bayesiana
+          </span>
+        </QuantCard>
+        <QuantCard label="Faixa de preço até o vencimento">
+          <div className="relative h-2.5 bg-[#eef2f7] rounded-full mt-3">
+            <div className="absolute inset-y-0 left-[5%] right-[5%] bg-blue-200 rounded-full" />
+            {spotPos != null && (
+              <div className="absolute -top-1 w-0.5 h-[18px] bg-[#141414]" style={{ left: `${5 + spotPos * 0.9}%` }} />
+            )}
+          </div>
+          <div className="flex justify-between font-mono text-[11px] text-[#3f3f3f]">
+            <span>{fmtNum(v?.p5)}</span>
+            <span className="font-bold text-[#141414]">spot {fmtNum(spot)}</span>
+            <span>{fmtNum(v?.p95)}</span>
+          </div>
+        </QuantCard>
+      </div>
+    </div>
+  );
+}
+
+function QuantHeaderCells() {
+  const th = 'px-3 py-2 font-bold text-blue-700 text-right bg-blue-50/60 whitespace-nowrap';
+  return (
+    <>
+      <th className={cn(th, 'border-l border-blue-100')} title="Volatilidade implícita do preço médio (ou do último)">VI</th>
+      <th className={th} title="Delta (Black-Scholes com a VI)">Δ</th>
+      <th className={th} title="Binomial americano com a vol realizada de 30 dias">Justo</th>
+      <th className={th} title="Preço médio (ou último) contra o justo">Mercado × justo</th>
+      <th className={th} title="Probabilidade de terminar dentro do dinheiro (Monte Carlo)">P(exerc.)</th>
+    </>
+  );
+}
+
+function QuantCells({ q, loading }: { q: QuantSerie | undefined; loading: boolean }) {
+  const td = 'px-3 py-2 font-mono text-right bg-blue-50/30 whitespace-nowrap';
+  if (!q) {
+    const empty = loading ? '…' : '—';
+    return (
+      <>
+        <td className={cn(td, 'border-l border-blue-100 text-[#5c5c5c]')}>{empty}</td>
+        <td className={cn(td, 'text-[#5c5c5c]')}>{empty}</td>
+        <td className={cn(td, 'text-[#5c5c5c]')}>{empty}</td>
+        <td className={cn(td, 'text-[#5c5c5c]')}>{empty}</td>
+        <td className={cn(td, 'text-[#5c5c5c]')}>{empty}</td>
+      </>
+    );
+  }
+  const below = q.edgePct != null && q.edgePct < 0;
+  return (
+    <>
+      <td className={cn(td, 'border-l border-blue-100')}>{q.iv != null ? `${fmtNum(q.iv, 1)}%` : '—'}</td>
+      <td className={td}>{q.delta != null ? `${q.delta >= 0 ? '+' : ''}${q.delta.toFixed(2)}` : '—'}</td>
+      <td className={td}>{q.justo != null ? `R$ ${q.justo.toFixed(2)}` : '—'}</td>
+      <td className={td}>
+        {q.edgePct != null ? (
+          <span
+            className={cn(
+              'text-[11px] font-bold px-1.5 py-0.5 rounded-md',
+              below ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
+            )}
+          >
+            {below ? '' : '+'}
+            {q.edgePct}% {below ? 'abaixo' : 'acima'}
+          </span>
+        ) : (
+          '—'
+        )}
+      </td>
+      <td className={td}>
+        <div className="flex items-center justify-end gap-2">
+          <div className="w-10 h-1.5 bg-[#e7ecf3] rounded-full overflow-hidden">
+            <div className="h-full bg-blue-600 rounded-full" style={{ width: `${q.pExerc ?? 0}%` }} />
+          </div>
+          <span className="min-w-[32px]">{q.pExerc != null ? `${q.pExerc}%` : '—'}</span>
+        </div>
+      </td>
+    </>
+  );
+}
+
 function ExpandedOptionsRow({
   ticker,
   isLoading,
@@ -1409,6 +1584,32 @@ function ExpandedOptionsRow({
     return () => { cancelled = true; };
   }, [ticker, isLoading, opts]);
 
+  // Camada quant (financial-analysis-framework) — calculada no servidor, cache diário
+  const [quant, setQuant] = useState<OptionsQuant | null>(null);
+  const [quantLoading, setQuantLoading] = useState(false);
+  const [showQuant, setShowQuant] = useState<boolean>(() => {
+    try { return localStorage.getItem('showQuant') !== '0'; } catch { return true; }
+  });
+  const toggleQuant = () => {
+    setShowQuant((v) => {
+      try { localStorage.setItem('showQuant', v ? '0' : '1'); } catch { /* sem storage */ }
+      return !v;
+    });
+  };
+  useEffect(() => {
+    if (isLoading || !opts || opts.length === 0) return;
+    let cancelled = false;
+    setQuantLoading(true);
+    getOptionsQuant(ticker).then((q) => {
+      if (cancelled) return;
+      setQuant(q);
+      setQuantLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [ticker, isLoading, opts]);
+  const quantOn = showQuant && (quantLoading || !!quant?.disponivel);
+  const quantFor = (opt: OptionData): QuantSerie | undefined => quant?.series?.[opt.ticker];
+
   const liveFor = (opt: OptionData) => liveMap.get(`${opt.tipo}|${opt.vencimento}|${opt.strike?.toFixed(2)}`);
   // Prioridade: oferta de fechamento do COTAHIST (rb3) > yfinance ao vivo
   const fmtLive = (v: number | null | undefined) =>
@@ -1450,7 +1651,28 @@ function ExpandedOptionsRow({
               </div>
             ) : null}
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <QuantStrip quant={quant} loading={quantLoading} venc={selectedVenc} spot={currentPrice} />
+
+            {(quantLoading || quant?.disponivel) && (
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={toggleQuant}
+                  aria-pressed={showQuant}
+                  className={cn(
+                    'inline-flex items-center gap-2 min-h-[40px] px-4 rounded-full text-xs font-bold border transition-colors',
+                    showQuant
+                      ? 'bg-blue-700 text-white border-blue-700 hover:bg-blue-800'
+                      : 'bg-white text-blue-700 border-blue-300 hover:bg-blue-50'
+                  )}
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                  Colunas quant: {showQuant ? 'ligadas' : 'desligadas'}
+                </button>
+              </div>
+            )}
+
+            <div className={cn('grid grid-cols-1 gap-8', quantOn ? '2xl:grid-cols-2' : 'lg:grid-cols-2')}>
               {/* CALLS */}
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -1466,7 +1688,7 @@ function ExpandedOptionsRow({
                     </span>
                   )}
                 </div>
-                <div className="bg-white rounded-xl border border-[#141414]/5 overflow-hidden">
+                <div className="bg-white rounded-xl border border-[#141414]/5 overflow-x-auto">
                   <table className="w-full text-left text-xs">
                     <thead className="bg-[#F5F5F4]/50 border-b border-[#141414]/5">
                       <tr>
@@ -1476,6 +1698,7 @@ function ExpandedOptionsRow({
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Melhor oferta de venda (ask) no fechamento do último pregão: quanto você paga para comprar">Compra</th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Melhor oferta de compra (bid) no fechamento do último pregão: quanto você recebe ao vender">Venda</th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Último negócio">Último</th>
+                        {quantOn && <QuantHeaderCells />}
                       </tr>
                     </thead>
                     <tbody>
@@ -1501,12 +1724,13 @@ function ExpandedOptionsRow({
                             <td className="px-4 py-2 font-mono text-right text-emerald-600 font-bold whitespace-nowrap">
                               R$ {opt.preco?.toFixed(2)}
                             </td>
+                            {quantOn && <QuantCells q={quantFor(opt)} loading={quantLoading} />}
                           </tr>
                         );
                       })}
                       {calls.length === 0 && (
                         <tr>
-                          <td colSpan={6} className="px-4 py-4 text-center text-[#141414]/30">
+                          <td colSpan={quantOn ? 11 : 6} className="px-4 py-4 text-center text-[#141414]/30">
                             Nenhuma CALL disponível
                           </td>
                         </tr>
@@ -1531,7 +1755,7 @@ function ExpandedOptionsRow({
                     </span>
                   )}
                 </div>
-                <div className="bg-white rounded-xl border border-[#141414]/5 overflow-hidden">
+                <div className="bg-white rounded-xl border border-[#141414]/5 overflow-x-auto">
                   <table className="w-full text-left text-xs">
                     <thead className="bg-[#F5F5F4]/50 border-b border-[#141414]/5">
                       <tr>
@@ -1541,6 +1765,7 @@ function ExpandedOptionsRow({
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Melhor oferta de venda (ask) no fechamento do último pregão: quanto você paga para comprar">Compra</th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Melhor oferta de compra (bid) no fechamento do último pregão: quanto você recebe ao vender">Venda</th>
                         <th className="px-4 py-2 font-bold text-[#141414]/40 text-right whitespace-nowrap" title="Último negócio">Último</th>
+                        {quantOn && <QuantHeaderCells />}
                       </tr>
                     </thead>
                     <tbody>
@@ -1562,12 +1787,13 @@ function ExpandedOptionsRow({
                             <td className="px-4 py-2 font-mono text-right text-rose-600 font-bold whitespace-nowrap">
                               R$ {opt.preco?.toFixed(2)}
                             </td>
+                            {quantOn && <QuantCells q={quantFor(opt)} loading={quantLoading} />}
                           </tr>
                         );
                       })}
                       {puts.length === 0 && (
                         <tr>
-                          <td colSpan={6} className="px-4 py-4 text-center text-[#141414]/30">
+                          <td colSpan={quantOn ? 11 : 6} className="px-4 py-4 text-center text-[#141414]/30">
                             Nenhuma PUT disponível
                           </td>
                         </tr>

@@ -17,6 +17,9 @@ on:
       - '.dockerignore'
       - '.github/workflows/docker-backend.yml'
   workflow_dispatch:
+  # Disparado pelo financial-analysis-framework a cada deploy dele (opcional)
+  repository_dispatch:
+    types: [faf-updated]
 
 permissions:
   contents: read
@@ -45,10 +48,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Commit atual do financial-analysis-framework (repositório privado)
+      - name: Resolver versão do financial-analysis-framework
+        id: faf
+        env:
+          FAF_READ_TOKEN: ${{ secrets.FAF_READ_TOKEN }}
+        run: |
+          if [ -z "$FAF_READ_TOKEN" ]; then
+            echo "::warning::Secret FAF_READ_TOKEN ausente: imagem sem a camada quant."
+            echo "ref=main" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          sha=$(git ls-remote "https://x-access-token:${FAF_READ_TOKEN}@github.com/KleberMirandaMariano/financial-analysis-framework.git" refs/heads/main | cut -f1)
+          echo "financial-analysis-framework @ ${sha}"
+          echo "ref=${sha:-main}" >> "$GITHUB_OUTPUT"
+
       - uses: docker/build-push-action@v6
         with:
           context: .
           push: true
+          build-args: |
+            FAF_REF=${{ steps.faf.outputs.ref }}
+          secrets: |
+            faf_token=${{ secrets.FAF_READ_TOKEN }}
           tags: |
             ghcr.io/klebermirandamariano/b3-penny-api:latest
             ghcr.io/klebermirandamariano/b3-penny-api:${{ github.sha }}
