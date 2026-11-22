@@ -59,9 +59,17 @@ jobs:
             echo "ref=main" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          sha=$(git ls-remote "https://x-access-token:${FAF_READ_TOKEN}@github.com/KleberMirandaMariano/financial-analysis-framework.git" refs/heads/main | cut -f1)
+          # API REST (o git ls-remote usaria o GITHUB_TOKEN gravado pelo
+          # actions/checkout, que não enxerga o repositório privado do faf)
+          sha=$(curl -fsS -H "Authorization: Bearer ${FAF_READ_TOKEN}" \
+            -H "Accept: application/vnd.github.sha" \
+            https://api.github.com/repos/KleberMirandaMariano/financial-analysis-framework/commits/main || true)
+          if ! echo "$sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::warning::Não foi possível resolver o commit do faf; usando main (o cache do Docker pode manter uma versão antiga)."
+            sha=main
+          fi
           echo "financial-analysis-framework @ ${sha}"
-          echo "ref=${sha:-main}" >> "$GITHUB_OUTPUT"
+          echo "ref=${sha}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/build-push-action@v6
         with:

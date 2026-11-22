@@ -122,13 +122,22 @@ def load_history(ticker: str) -> pd.Series:
 
 
 def load_selic() -> float:
+    """Selic em % a.a.: efetiva (série 1178, faf > 0.2.0) ou meta do Copom (432).
+
+    Nunca usa fetch_selic() da faf 0.2.0, que devolvia a taxa DIÁRIA (série 11).
+    """
     try:
-        from faf.data.collectors.macro_brasil_collector import MacroBrasilCollector
-        # Série 432 = meta Selic (% a.a.). fetch_selic() usa a série 11, que é a taxa DIÁRIA.
-        df = MacroBrasilCollector().fetch("selic", days=40)
-        val = float(df.iloc[-1, 0])
-        if 0 < val < 100:
-            return val
+        from faf.data.collectors.macro_brasil_collector import BCB_SERIES, MacroBrasilCollector
+        col = MacroBrasilCollector()
+        for alias in ("selic_aa", "selic"):
+            if alias not in BCB_SERIES:
+                continue
+            try:
+                val = float(col.fetch(alias, days=40)["value"].dropna().iloc[-1])
+            except Exception:
+                continue
+            if 1 < val < 100:  # descarta taxa diária (~0,05) e lixo
+                return val
     except Exception:
         pass
     return SELIC_FALLBACK

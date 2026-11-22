@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getStocks, getOptions, getOptionsLive, getOptionsQuant, analyzeOption, triggerUpdate, getUpdateStatus, getMe, type StocksResponse, type LiveOptionData, type ChainRow, type AnalyzeResult, type OptionsQuant, type QuantSerie } from './services/stockService';
 import { AiAnalysisCard } from './components/AiAnalysisCard';
 import { cn, type StockData, type OptionData } from './utils';
@@ -1398,12 +1398,12 @@ function QuantStrip({
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <BarChart3 className="w-4 h-4 text-blue-700" />
         <h4 className="text-[10px] font-bold uppercase tracking-widest text-blue-700">
           Leitura quant do ativo · até o vencimento
         </h4>
-        <span className="text-[10px] font-mono text-[#5c5c5c] ml-auto">
+        <span className="text-[10px] font-mono text-[#5c5c5c] basis-full sm:basis-auto sm:ml-auto">
           COTAHIST {quant.dataReferencia ? new Date(quant.dataReferencia + 'T12:00:00Z').toLocaleDateString('pt-BR') : ''} · Selic {fmtNum(quant.selic)}% · faf v{quant.faf}
         </span>
       </div>
@@ -1539,6 +1539,20 @@ function ExpandedOptionsRow({
 }) {
   const [selectedOption, setSelectedOption] = useState<OptionData | null>(null);
 
+  // A tabela de ações rola na horizontal no celular; o painel acompanha só a
+  // largura visível (fixo à esquerda) em vez da largura total da tabela.
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [panelWidth, setPanelWidth] = useState<number | null>(null);
+  useEffect(() => {
+    const scroller = panelRef.current?.closest('.overflow-x-auto') as HTMLElement | null;
+    if (!scroller) return;
+    const update = () => setPanelWidth(scroller.clientWidth);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(scroller);
+    return () => ro.disconnect();
+  }, []);
+
   const vencimentos = useMemo(() => {
     if (!opts) return [];
     const v = new Set(opts.map((o) => o.vencimento));
@@ -1617,7 +1631,12 @@ function ExpandedOptionsRow({
 
   return (
     <tr className="bg-[#FBFBFA]">
-      <td colSpan={9} className="px-6 py-8">
+      <td colSpan={9} className="p-0">
+        <div
+          ref={panelRef}
+          className="sticky left-0 box-border px-4 sm:px-6 py-6 sm:py-8"
+          style={panelWidth ? { width: panelWidth } : undefined}
+        >
         {isLoading ? (
           <div className="flex items-center justify-center gap-2 py-8 text-[#141414]/40">
             <RefreshCw className="w-4 h-4 animate-spin" />
@@ -1672,7 +1691,7 @@ function ExpandedOptionsRow({
               </div>
             )}
 
-            <div className={cn('grid grid-cols-1 gap-8', quantOn ? '2xl:grid-cols-2' : 'lg:grid-cols-2')}>
+            <div className={cn('grid grid-cols-1 gap-8', quantOn ? 'grid-cols-1' : 'lg:grid-cols-2')}>
               {/* CALLS */}
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -1714,7 +1733,7 @@ function ExpandedOptionsRow({
                             <td className="px-4 py-2 w-20 text-center">
                               <MoneynessBadge moneyness={moneyness} />
                             </td>
-                            <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
+                            <td className="px-4 py-2 font-mono text-[#141414]/60 whitespace-nowrap">R$ {opt.strike?.toFixed(2)}</td>
                             <td className="px-4 py-2 font-mono text-right text-[#141414]/80 whitespace-nowrap">
                               {fmtLive(opt.ask ?? liveFor(opt)?.ask)}
                             </td>
@@ -1777,7 +1796,7 @@ function ExpandedOptionsRow({
                             <td className="px-4 py-2 w-20 text-center">
                               <MoneynessBadge moneyness={moneyness} />
                             </td>
-                            <td className="px-4 py-2 font-mono text-[#141414]/60">R$ {opt.strike?.toFixed(2)}</td>
+                            <td className="px-4 py-2 font-mono text-[#141414]/60 whitespace-nowrap">R$ {opt.strike?.toFixed(2)}</td>
                             <td className="px-4 py-2 font-mono text-right text-[#141414]/80 whitespace-nowrap">
                               {fmtLive(opt.ask ?? liveFor(opt)?.ask)}
                             </td>
@@ -1815,6 +1834,7 @@ function ExpandedOptionsRow({
             />
           )}
         </AnimatePresence>
+        </div>
       </td>
     </tr>
   );
