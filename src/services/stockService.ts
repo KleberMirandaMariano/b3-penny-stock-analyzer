@@ -163,6 +163,47 @@ export async function getOptionsLive(ticker: string): Promise<{ opcoes: LiveOpti
 }
 
 // ---------------------------------------------------------------------------
+// Camada quant (financial-analysis-framework) para a cadeia de um ativo
+// ---------------------------------------------------------------------------
+export interface QuantSerie {
+  iv: number | null;       // % a.a.
+  delta: number | null;
+  justo: number | null;    // R$ (binomial americano, vol realizada)
+  edgePct: number | null;  // mercado × justo, %
+  pExerc: number | null;   // %
+}
+export interface QuantVencimento {
+  pregoes: number;
+  probAlta: number | null;
+  p5: number | null;
+  p95: number | null;
+  ivAtm: number | null;
+}
+export interface OptionsQuant {
+  disponivel: boolean;
+  motivo?: string;
+  dataReferencia?: string;
+  spot?: number;
+  selic?: number;
+  rv30?: number;
+  regime?: { rotulo: string; prob: number; pregoes: number } | null;
+  vencimentos?: Record<string, QuantVencimento>;
+  series?: Record<string, QuantSerie>;
+  simulacoes?: number;
+  faf?: string;
+}
+
+export async function getOptionsQuant(ticker: string): Promise<OptionsQuant> {
+  try {
+    const res = await fetch(`${API_BASE}/api/options/${ticker}/quant`, { signal: AbortSignal.timeout(190_000) });
+    if (!res.ok) return { disponivel: false, motivo: `HTTP ${res.status}` };
+    return await res.json();
+  } catch (err: any) {
+    return { disponivel: false, motivo: err?.message ?? 'Falha de rede' };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Análise IA de uma opção via OpenRouter (servidor)
 // ---------------------------------------------------------------------------
 export interface ChainRow {
