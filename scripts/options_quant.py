@@ -51,7 +51,6 @@ try:
     from faf.analysis.bayesian.regime_detection import BayesianRegimeDetector
     from faf.analysis.forecasting import MonteCarloForecast
     from faf.analysis.options import binomial_price, black_scholes, implied_volatility
-    from faf.data.collectors.cotahist_collector import CotahistCollector
     from faf.data.processors.calendar import b3_holidays
 except ImportError as exc:  # faf não instalado na imagem
     out({"disponivel": False, "motivo": f"financial-analysis-framework não instalado ({exc.name})"})
@@ -98,27 +97,178 @@ def load_chain(ticker: str) -> tuple[list[dict], float | None, str]:
     return opts, spot, data_ref
 
 
-def load_history(ticker: str) -> pd.Series:
-    """Fechamentos diários do COTAHIST anual (ano atual + anterior), via faf."""
-    FAF_CACHE.mkdir(parents=True, exist_ok=True)
-    year = date.today().year
-    # O arquivo do ano corrente cresce a cada pregão: renova o cache após 20h
-    cur = FAF_CACHE / f"COTAHIST_A{year}.TXT"
-    if cur.exists() and time.time() - cur.stat().st_mtime > 20 * 3600:
-        cur.unlink()
-    col = CotahistCollector(cache_dir=FAF_CACHE)
-    parts = []
-    for y in (year - 1, year):  # um ano com falha não derruba o outro
+# ---------------------------------------------------------------------------
+# Histórico de fechamentos (COTAHIST) — compacto e incremental
+# ---------------------------------------------------------------------------
+# O COTAHIST anual tem ~90 MB zipado / ~780 MB em texto. Em vez de guardar o
+# texto e relê-lo a cada cálculo, o ZIP é lido em streaming uma única vez e só
+# os fechamentos do mercado à vista (lote padrão) vão para closes_<ano>.json
+# (~2 MB). O ano anterior é baixado uma vez; no ano corrente, depois da carga
+# inicial, entram só os arquivos DIÁRIOS novos (~1,4 MB cada).
+# Base dos arquivos da B3 (configurável para testes)
+B3_SERHIST = os.environ.get("B3_SERHIST_URL", "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/")
+CLOSES_DIR = FAF_CACHE / "closes"
+MAX_DAILY_GAP = 40  # pregões; acima disso recarrega o anual do ano corrente
+
+
+def _download(url: str, dest: Path) -> bool:
+    """Baixa em streaming; False se a B3 não publicou o arquivo."""
+    import requests
+    tmp = dest.with_suffix(".part")
+    with requests.get(url, stream=True, timeout=60) as r:
+        if r.status_code in (403, 404):  # não publicado ou acesso recusado
+            return False
+        r.raise_for_status()
+        with open(tmp, "wb") as f:
+            for chunk in r.iter_content(1 << 20):
+                f.write(chunk)
+    with open(tmp, "rb") as f:
+        is_zip = f.read(2) == b"PK"
+    if not is_zip:  # página de erro no lugar do ZIP
+        tmp.unlink(missing_ok=True)
+        return False
+    tmp.replace(dest)
+    return True
+
+
+def _parse_zip(path: Path) -> dict[str, dict[str, float]]:
+    """Fechamentos {ticker: {AAAA-MM-DD: preço}} do à vista, lote padrão."""
+    import io
+    import zipfile
+    out_: dict[str, dict[str, float]] = {}
+    with zipfile.ZipFile(path) as zf:
+        name = next(n for n in zf.namelist() if n.upper().endswith(".TXT"))
+        with zf.open(name) as raw:
+            for line in io.TextIOWrapper(raw, encoding="latin-1"):
+                # TIPREG 01, CODBDI 02 (lote padrão), TPMERC 010 (à vista)
+                if line[0:2] != "01" or line[10:12] != "02" or line[24:27] != "010":
+                    continue
+                fatcot = int(line[210:217] or 1) or 1
+                close = int(line[108:121]) / 100.0 / fatcot
+                d = line[2:10]
+                out_.setdefault(line[12:24].strip(), {})[f"{d[:4]}-{d[4:6]}-{d[6:]}"] = close
+    return out_
+
+
+def _merge(dst: dict, src: dict) -> None:
+    for tk, serie in src.items():
+        dst.setdefault(tk, {}).update(serie)
+
+
+def _load_year(year: int) -> dict | None:
+    p = CLOSES_DIR / f"closes_{year}.json"
+    if p.exists():
         try:
-            df = col.fetch_history(ticker, years=y)
-            if not df.empty:
-                parts.append(df["Close"])
-        except Exception as exc:
-            print(f"[options_quant] COTAHIST {y} indisponível: {exc}", file=sys.stderr)
-    if not parts:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+    return None
+
+
+def _save_year(year: int, store: dict) -> None:
+    CLOSES_DIR.mkdir(parents=True, exist_ok=True)
+    p = CLOSES_DIR / f"closes_{year}.json"
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(store, separators=(",", ":")), encoding="utf-8")
+    tmp.replace(p)
+
+
+def _from_annual(year: int) -> dict | None:
+    CLOSES_DIR.mkdir(parents=True, exist_ok=True)
+    z = CLOSES_DIR / f"COTAHIST_A{year}.ZIP"
+    print(f"[options_quant] baixando COTAHIST anual {year}...", file=sys.stderr)
+    if not _download(f"{B3_SERHIST}COTAHIST_A{year}.ZIP", z):
+        return None
+    try:
+        dados = _parse_zip(z)
+    finally:
+        z.unlink(missing_ok=True)
+    ate = max((d for s in dados.values() for d in s), default=f"{year}-01-01")
+    return {"ano": year, "ate": ate, "dados": dados}
+
+
+def _from_monthly(year: int, until_month: int) -> dict | None:
+    """Plano B do ano corrente: arquivos mensais dos meses já fechados."""
+    dados: dict[str, dict[str, float]] = {}
+    for m in range(1, until_month):
+        z = CLOSES_DIR / f"COTAHIST_M{m:02d}{year}.ZIP"
+        if not _download(f"{B3_SERHIST}COTAHIST_M{m:02d}{year}.ZIP", z):
+            return None
+        try:
+            _merge(dados, _parse_zip(z))
+        finally:
+            z.unlink(missing_ok=True)
+    ate = max((d for s_ in dados.values() for d in s_), default=f"{year - 1}-12-31")
+    return {"ano": year, "ate": ate, "dados": dados}
+
+
+def ensure_year(year: int) -> dict:
+    """Garante closes_<ano>.json atualizado e o devolve."""
+    today = date.today()
+    store = _load_year(year)
+
+    if store is None or (year == today.year and _stale(store, today)):
+        fresh = _from_annual(year)
+        if fresh is None and year == today.year and today.month > 1:
+            fresh = _from_monthly(year, today.month)
+        if fresh is not None:
+            store = fresh
+        elif store is None:
+            store = {"ano": year, "ate": f"{year - 1}-12-31", "dados": {}}
+        _save_year(year, store)
+
+    if year == today.year:  # incremental com os diários
+        hol = {d.date() for d in b3_holidays(year, year)}
+        last = datetime.strptime(store["ate"], "%Y-%m-%d").date()
+        for d in pd.bdate_range(last + pd.Timedelta(days=1), today):
+            d = d.date()
+            if d in hol:
+                continue
+            z = CLOSES_DIR / f"COTAHIST_D{d:%d%m%Y}.ZIP"
+            try:
+                ok = _download(f"{B3_SERHIST}COTAHIST_D{d:%d%m%Y}.ZIP", z)
+            except Exception:
+                break
+            if not ok:  # ainda não publicado (sai à noite) ou indisponível: tenta depois
+                break
+            try:
+                _merge(store["dados"], _parse_zip(z))
+                store["ate"] = d.isoformat()
+            finally:
+                z.unlink(missing_ok=True)
+        _save_year(year, store)
+    return store
+
+
+def _stale(store: dict, today: date) -> bool:
+    last = datetime.strptime(store["ate"], "%Y-%m-%d").date()
+    return int(np.busday_count(last, today)) > MAX_DAILY_GAP
+
+
+def prepare_history() -> dict:
+    """Prepara (ou atualiza) os dois anos; usado no pré-aquecimento."""
+    import fcntl
+    CLOSES_DIR.mkdir(parents=True, exist_ok=True)
+    # Remove o cache antigo do coletor do faf (TXT anual de ~780 MB)
+    for big in FAF_CACHE.glob("COTAHIST_A*.TXT"):
+        big.unlink(missing_ok=True)
+    with open(CLOSES_DIR / ".lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)  # um preparo por vez
+        year = date.today().year
+        return {y: ensure_year(y) for y in (year - 1, year)}
+
+
+def load_history(ticker: str) -> pd.Series:
+    """Fechamentos diários do ativo (ano anterior + corrente)."""
+    stores = prepare_history()
+    serie: dict[str, float] = {}
+    for st in stores.values():
+        serie.update(st["dados"].get(ticker, {}))
+    if not serie:
         return pd.Series(dtype=float)
-    s = pd.concat(parts).astype(float).dropna()
-    return s[~s.index.duplicated(keep="last")].sort_index()
+    s = pd.Series(serie, dtype=float)
+    s.index = pd.to_datetime(s.index)
+    return s.sort_index()
 
 
 def load_selic() -> float:
@@ -253,6 +403,9 @@ def analyze(ticker: str) -> dict:
 def main() -> None:
     if len(sys.argv) < 2:
         out({"disponivel": False, "motivo": "Ticker não informado"}, 1)
+    if sys.argv[1] == "--prewarm":
+        stores = prepare_history()
+        out({"ok": True, "anos": {str(y): {"ate": st["ate"], "ativos": len(st["dados"])} for y, st in stores.items()}})
     ticker = sys.argv[1].upper().strip()
     if not COTAHIST_JSON.exists():
         out({"disponivel": False, "motivo": "cotahist.json ainda não gerado."})

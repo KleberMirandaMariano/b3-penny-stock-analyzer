@@ -181,6 +181,7 @@ export interface QuantVencimento {
 }
 export interface OptionsQuant {
   disponivel: boolean;
+  preparando?: boolean;   // histórico da B3 ainda sendo baixado no servidor
   motivo?: string;
   dataReferencia?: string;
   spot?: number;
@@ -195,7 +196,7 @@ export interface OptionsQuant {
 
 export async function getOptionsQuant(ticker: string): Promise<OptionsQuant> {
   try {
-    const res = await fetch(`${API_BASE}/api/options/${ticker}/quant`, { signal: AbortSignal.timeout(190_000) });
+    const res = await fetch(`${API_BASE}/api/options/${ticker}/quant`, { signal: AbortSignal.timeout(60_000) });
     if (!res.ok) return { disponivel: false, motivo: `HTTP ${res.status}` };
     return await res.json();
   } catch (err: any) {

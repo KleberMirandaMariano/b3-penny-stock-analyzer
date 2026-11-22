@@ -1379,9 +1379,11 @@ function QuantStrip({
 }) {
   if (loading) {
     return (
-      <div className="flex items-center gap-2 text-xs text-[#5c5c5c]">
+      <div className="flex items-center gap-2 text-xs text-[#5c5c5c]" role="status">
         <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-        Calculando leitura quant (financial-analysis-framework)… o primeiro acesso do dia leva alguns segundos.
+        {quant?.preparando
+          ? quant.motivo
+          : 'Calculando leitura quant (financial-analysis-framework)… o primeiro acesso do dia leva alguns segundos.'}
       </div>
     );
   }
@@ -1613,13 +1615,26 @@ function ExpandedOptionsRow({
   useEffect(() => {
     if (isLoading || !opts || opts.length === 0) return;
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let tentativas = 0;
     setQuantLoading(true);
-    getOptionsQuant(ticker).then((q) => {
-      if (cancelled) return;
-      setQuant(q);
-      setQuantLoading(false);
-    });
-    return () => { cancelled = true; };
+    setQuant(null);
+    const buscar = () => {
+      getOptionsQuant(ticker).then((q) => {
+        if (cancelled) return;
+        // Servidor ainda baixando o histórico da B3: tenta de novo (até ~15 min)
+        if (q.preparando && tentativas < 60) {
+          tentativas += 1;
+          setQuant(q);
+          timer = setTimeout(buscar, 15_000);
+          return;
+        }
+        setQuant(q);
+        setQuantLoading(false);
+      });
+    };
+    buscar();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
   }, [ticker, isLoading, opts]);
   const quantOn = showQuant && (quantLoading || !!quant?.disponivel);
   const quantFor = (opt: OptionData): QuantSerie | undefined => quant?.series?.[opt.ticker];

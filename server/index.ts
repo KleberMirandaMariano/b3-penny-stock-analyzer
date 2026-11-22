@@ -675,8 +675,10 @@ app.get('/api/options/:ticker/live', (req: Request, res: Response) => {
 // O script guarda o resultado por ativo/dia em data/quant/.
 // ---------------------------------------------------------------------------
 const quantInFlight = new Map<string, Promise<any>>();
+const QUANT_HARD_LIMIT_MS = 20 * 60_000; // download do histórico da B3 pode levar minutos
+const QUANT_RESPONSE_WAIT_MS = 25_000;  // depois disso a página recebe "preparando"
 
-function runQuant(ticker: string): Promise<any> {
+function runQuant(arg: string): Promise<any> {
   const script = path.join(ROOT_DIR, 'scripts', 'options_quant.py');
   const python = process.platform === 'win32' ? 'python' : 'python3';
   return new Promise((resolve) => {
@@ -684,16 +686,17 @@ function runQuant(ticker: string): Promise<any> {
       resolve({ disponivel: false, motivo: 'Script options_quant.py não encontrado.' });
       return;
     }
-    const proc = spawn(python, [script, ticker]);
+    const proc = spawn(python, [script, arg]);
     let stdout = '';
     let stderr = '';
     proc.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
     proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
-    // 1º acesso pode baixar o COTAHIST anual da B3 (dezenas de MB)
+    // Só um limite de segurança: o processo NÃO é morto quando a página desiste
+    // de esperar, para que o download do histórico termine e fique em cache.
     const timeout = setTimeout(() => {
       proc.kill();
       resolve({ disponivel: false, motivo: 'Tempo esgotado no cálculo quant.' });
-    }, 180_000);
+    }, QUANT_HARD_LIMIT_MS);
     proc.on('close', () => {
       clearTimeout(timeout);
       try {
@@ -706,6 +709,15 @@ function runQuant(ticker: string): Promise<any> {
   });
 }
 
+function quantJob(key: string): Promise<any> {
+  let job = quantInFlight.get(key);
+  if (!job) {
+    job = runQuant(key).finally(() => quantInFlight.delete(key));
+    quantInFlight.set(key, job);
+  }
+  return job;
+}
+
 app.get('/api/options/:ticker/quant', async (req: Request, res: Response) => {
   const ticker = req.params.ticker.toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (!ticker) {
@@ -713,13 +725,22 @@ app.get('/api/options/:ticker/quant', async (req: Request, res: Response) => {
     return;
   }
   // Pedidos simultâneos do mesmo ativo compartilham um único cálculo
-  let job = quantInFlight.get(ticker);
-  if (!job) {
-    job = runQuant(ticker).finally(() => quantInFlight.delete(ticker));
-    quantInFlight.set(ticker, job);
-  }
-  res.json(await job);
+  const job = quantJob(ticker);
+  const waiting = new Promise((resolve) =>
+    setTimeout(() => resolve({
+      disponivel: false,
+      preparando: true,
+      motivo: 'Preparando o histórico da B3 (só no primeiro acesso). A página tenta de novo sozinha.',
+    }), QUANT_RESPONSE_WAIT_MS)
+  );
+  res.json(await Promise.race([job, waiting]));
 });
+
+// Pré-aquecimento: baixa/atualiza o histórico da B3 logo após o servidor subir,
+// para que o primeiro clique numa opção não precise esperar o download.
+setTimeout(() => {
+  quantJob('--prewarm').then((r) => console.log('[quant] histórico:', JSON.stringify(r)));
+}, 20_000);
 
 // ---------------------------------------------------------------------------
 // POST /api/options/analyze – Análise IA via OpenRouter (com Rate Limit + Fila)
