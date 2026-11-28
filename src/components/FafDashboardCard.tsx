@@ -14,7 +14,7 @@ export function FafDashboardCard() {
       href={FAF_URL}
       target="_blank"
       rel="noopener noreferrer"
-      className="group block bg-white p-4 md:p-6 rounded-2xl border border-[#141414]/5 shadow-sm h-fit hover:border-[#141414]/20 transition-all"
+      className="group flex flex-col h-full bg-white p-4 md:p-6 rounded-2xl border border-[#141414]/5 shadow-sm hover:border-[#141414]/20 transition-all"
     >
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -24,7 +24,7 @@ export function FafDashboardCard() {
         <LayoutDashboard className="w-4 h-4 text-[#141414]/40" />
       </div>
 
-      <div className="h-[250px] md:h-[350px] w-full flex flex-col justify-between gap-4">
+      <div className="flex-1 min-h-[250px] w-full flex flex-col justify-between gap-4">
         <div className="space-y-4">
           <div className="flex items-center gap-3">
             <div className="p-3 bg-[#F5F5F4] rounded-xl group-hover:bg-[#141414] group-hover:text-white transition-colors">

@@ -438,10 +438,10 @@ export default function App() {
 
         {/* Charts Section */}
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-          <div className="xl:col-span-2 space-y-6">
+          <div className="xl:col-span-2 flex flex-col">
 
-            {/* Comparativo de Preços */}
-            <div className="bg-white p-4 md:p-6 rounded-2xl border border-[#141414]/5 shadow-sm">
+            {/* Comparativo de Preços (estica até a altura do card ao lado) */}
+            <div className="flex-1 bg-white p-4 md:p-6 rounded-2xl border border-[#141414]/5 shadow-sm">
               <div className="flex items-center justify-between mb-6">
                 <div>
                   <h3 className="font-semibold text-lg">Comparativo de Preços</h3>
