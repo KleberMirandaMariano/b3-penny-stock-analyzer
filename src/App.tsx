@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getStocks, getOptions, getOptionsLive, getOptionsQuant, analyzeOption, triggerUpdate, getUpdateStatus, getMe, type StocksResponse, type LiveOptionData, type ChainRow, type AnalyzeResult, type OptionsQuant, type QuantSerie } from './services/stockService';
 import { AiAnalysisCard } from './components/AiAnalysisCard';
+import { FafDashboardCard } from './components/FafDashboardCard';
 import { GuideTip, RegimeGuide, VolGuide, MonteCarloGuide, FaixaGuide, MatrizGuide, ColVIGuide, ColDeltaGuide, ColJustoGuide, ColEdgeGuide, ColPExercGuide, type GuideCtx, type ColCtx } from './components/QuantGuides';
 import { cn, type StockData, type OptionData } from './utils';
 import { calcIV, calcGreeks, bsPrice, normCDF } from './blackScholes';
@@ -9,7 +10,6 @@ import {
   TrendingUp,
   TrendingDown,
   BarChart3,
-  PieChart as PieChartIcon,
   Search,
   ArrowUpDown,
   Activity,
@@ -34,14 +34,9 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  PieChart,
-  Pie,
   Cell,
-  Legend
 } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
-
-const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'];
 
 // Tickers fixos exibidos sempre na tela inicial (em ordem)
 const FIXED_TICKERS = [
@@ -209,19 +204,13 @@ export default function App() {
   // ---- estatísticas --------------------------------------------------------
   const stats = useMemo(() => {
     if (displayStocks.length === 0)
-      return { avgPrice: 0, topGainer: null, topLoser: null, pieData: [] };
+      return { avgPrice: 0, topGainer: null, topLoser: null };
 
     const avgPrice = displayStocks.reduce((a, s) => a + s.preco, 0) / displayStocks.length;
     const topGainer = [...displayStocks].sort((a, b) => (b.varDia ?? -999) - (a.varDia ?? -999))[0];
     const topLoser = [...displayStocks].sort((a, b) => (a.varDia ?? 999) - (b.varDia ?? 999))[0];
 
-    const sectorMap = displayStocks.reduce<Record<string, number>>((acc, s) => {
-      acc[s.setor] = (acc[s.setor] || 0) + 1;
-      return acc;
-    }, {});
-    const pieData = Object.entries(sectorMap).map(([name, value]) => ({ name, value }));
-
-    return { avgPrice, topGainer, topLoser, pieData };
+    return { avgPrice, topGainer, topLoser };
   }, [displayStocks]);
 
   const handleSort = (key: keyof StockData) => {
@@ -486,26 +475,8 @@ export default function App() {
             </div>
           </div>
 
-          {/* Setor */}
-          <div className="bg-white p-4 md:p-6 rounded-2xl border border-[#141414]/5 shadow-sm h-fit">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="font-semibold text-lg">Setores</h3>
-              <PieChartIcon className="w-4 h-4 text-[#141414]/40" />
-            </div>
-            <div className="h-[250px] md:h-[350px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={stats.pieData} cx="50%" cy="45%" innerRadius="60%" outerRadius="80%" paddingAngle={4} dataKey="value">
-                    {stats.pieData.map((_, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip contentStyle={{ borderRadius: '12px', fontSize: '12px' }} />
-                  <Legend verticalAlign="bottom" align="center" iconType="circle" wrapperStyle={{ fontSize: '10px', paddingTop: '20px' }} />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
+          {/* Dashboard do financial-analysis-framework (substitui o gráfico de setores) */}
+          <FafDashboardCard />
         </div>
 
         {/* Tabela */}
